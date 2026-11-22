@@ -1,0 +1,9 @@
+{
+  "name": "herdr-app-git-workbench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/dev-sync.mjs",
+    "dev": "node scripts/dev-sync.mjs --watch"
+  }
+}
