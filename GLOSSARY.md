@@ -14,6 +14,12 @@
 
 **Conflict**: A path left unmerged by a merge, rebase or cherry-pick. It is *marked resolved* by staging it; the Workbench never resolves its content.
 
+**Diff target**: What a Diff view compares: one path (or an old and new path, for a rename) between two sides. Each side is a commit, HEAD, the index, the working tree, or empty.
+
+**Operation in progress**: A merge, rebase, cherry-pick or revert that has stopped partway, usually leaving Conflicts.
+
+**Linked worktree**: An additional working tree of a repository. Each one is a separate Repository to the Workbench, but they share history and branches with each other.
+
 **Discard**: Throwing away a Change's working-tree modifications. It always requires the user to confirm.
 
 **Phase 1**: The MVP feature set. **Phase 2**: The follow-on feature set that Phase 1's design must not block.
