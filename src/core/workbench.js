@@ -5,6 +5,7 @@
 import { createGit, GitNotFound } from "./git.js";
 import { createRepository, repositoryId } from "./repository.js";
 import { createQueue, queueId } from "./queue.js";
+import { loadDiff } from "./diff.js";
 
 /** @typedef {import("./platform.js").Platform} Platform */
 /** @typedef {import("./queue.js").Queue} Queue */
@@ -87,6 +88,15 @@ export function createWorkbench(platform) {
      */
     repository(key) {
       return repositories.get(repositoryId(key));
+    },
+
+    /**
+     * Loads a Diff target's DiffDocument. It needs no followed Repository and
+     * skips every queue. Rejects with DiffLoadError when git can't diff it.
+     * @param {import("./diff-target.js").DiffTarget} target
+     */
+    loadDiff(target) {
+      return loadDiff(git, target);
     },
 
     /**

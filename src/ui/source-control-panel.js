@@ -5,6 +5,8 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, home, theme, run, checking, nextCommand } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
+import { diffTargetFor } from "../core/diff-target.js";
+import { openDiff } from "./diff-tabs.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -152,6 +154,7 @@ export class SourceControlPanel {
           // Nothing is staged except what the user ticks. Results land in snapshot.lastError.
           stage: (changes) => void repository.stage(changes.map((c) => c.path)),
           unstage: (changes) => void repository.unstage(changes.flatMap(pathsOf)),
+          open: (change) => openDiff(diffTargetFor(repository.key, change)),
         };
         return v_flex().flex_1().min_h(0)
           .when(s.running !== null, (e) => e.child(runningStrip(t, s.running.label)))
@@ -198,6 +201,7 @@ export class SourceControlPanel {
  *   busy: boolean,
  *   stage(changes: import("../core/status.js").Change[]): void,
  *   unstage(changes: import("../core/status.js").Change[]): void,
+ *   open(change: import("../core/status.js").Change): void,
  * }} Actions
  */
 
@@ -303,12 +307,17 @@ function emptyNote(t, text) {
 
 /**
  * One Change: a coloured status letter, the dim folder, the bold file name and, for a rename, its old path.
+ * Clicking it opens the Change's Diff view.
  * @param {Record<string, string>} t @param {import("../core/status.js").Change} change @param {Actions} actions
  */
 function changeRow(t, change, actions) {
   const path = printable(change.path);
   const row = h_flex().id(`row-${change.group}:${change.path}`).flex_none().h(24).px(10).gap(8).items_center()
-    .hover((s) => s.bg(t.hover))
+    .cursor_pointer().hover((s) => s.bg(t.hover))
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      actions.open(change);
+    })
     .child(checkbox(t, change, actions))
     .child(div().flex_none().w(12).text_size(11).font_semibold().text_color(statusColor(t, change)).child(statusLetter(change)))
     .child(h_flex().flex_1().min_w(0)
