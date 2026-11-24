@@ -43,14 +43,14 @@ export function createWorkbench(platform) {
 
   /**
    * Creates a Repository on the queue for its common git dir (shared by Linked worktrees).
-   * @param {RepositoryKey} key @param {string} commonDir
+   * @param {RepositoryKey} key @param {string} commonDir @param {string} gitDir
    */
-  function openRepository(key, commonDir) {
+  function openRepository(key, commonDir, gitDir) {
     const qid = queueId({ machine: key.machine, commonDir });
     let slot = queues.get(qid);
     if (!slot) queues.set(qid, (slot = { queue: createQueue(), users: 0 }));
     slot.users++;
-    const repository = createRepository({ git, key, queue: slot.queue });
+    const repository = createRepository({ git, key, queue: slot.queue, gitDir, readTextFile: platform.readTextFile });
     const shared = slot;
     return {
       repository,
@@ -108,19 +108,19 @@ export function createWorkbench(platform) {
       const mine = ++generation;
       const stale = () => mine !== generation;
       try {
-        const top = await git.run(machine, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"], { cwd: folder, read: true });
+        const top = await git.run(machine, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir", "--git-dir"], { cwd: folder, read: true });
         if (stale()) return;
         if (!top.ok) {
           leave();
           return setState({ kind: "no-repository", folder });
         }
-        const [toplevel, commonDir] = top.stdout.split("\n").map((l) => l.trim());
+        const [toplevel, commonDir, gitDir] = top.stdout.split("\n").map((l) => l.trim());
         const key = { machine: machine ?? null, toplevel };
         if (current?.repository.id === repositoryId(key) && state.kind === "ready") return;
 
         leave();
         setState({ kind: "loading", folder });
-        const opened = openRepository(key, commonDir);
+        const opened = openRepository(key, commonDir, gitDir);
         await opened.repository.refresh();
         if (stale()) {
           opened.close();

@@ -168,7 +168,7 @@ function createDiffDocument(target, patch) {
     /** True for a Conflict's combined diff; its toPatch() is not appliable. */
     combined: patch.combined,
     notice,
-    /** @param {"split"} mode */
+    /** @param {import("./rows.js").RowMode} mode */
     rows(mode) {
       let rows = cache.get(mode);
       if (!rows) cache.set(mode, (rows = buildRows(patch.body, mode)));
