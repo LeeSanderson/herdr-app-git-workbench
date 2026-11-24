@@ -19,12 +19,18 @@
  * `changed` (paired change lines only) is the [start, end) that differs from its pair.
  * @typedef {{ kind: "ctx" | "del" | "add", a?: number, b?: number, text: string, noeol?: true, changed?: [number, number], block?: number }} InlineRow
  */
+/**
+ * A run of unchanged lines a truncated diff leaves out (the same in both modes).
+ * `title` is git's function context of the following hunk ("" after the last one).
+ * @typedef {{ kind: "gap", count: number, title: string }} GapRow
+ */
 /** @typedef {"split" | "inline"} RowMode */
+/** @typedef {import("./diff.js").GapLine} GapLine */
 
 /**
  * @template {RowMode} M
- * @param {PatchLine[]} body @param {M} mode
- * @returns {readonly (M extends "split" ? SplitRow : InlineRow)[]}
+ * @param {(PatchLine | GapLine)[]} body @param {M} mode
+ * @returns {readonly ((M extends "split" ? SplitRow : InlineRow) | GapRow)[]}
  */
 export function buildRows(body, mode) {
   if (mode === "split") return /** @type {any} */ (Object.freeze(splitRows(body)));
@@ -67,21 +73,32 @@ const half = (l, line) => (l.noeol ? { line, text: l.text, noeol: true } : { lin
 /**
  * Walks the body as context lines and change blocks. A change block is a run of
  * deletions followed by a run of additions; both modes use these blocks.
- * @param {PatchLine[]} body
+ * A gap (truncated diffs) ends a block and becomes the same GapRow in both modes.
+ * @param {(PatchLine | GapLine)[]} body
+ * @param {(row: GapRow) => void} onGap
  * @param {(l: PatchLine) => void} onContext
  * @param {(dels: PatchLine[], adds: PatchLine[], block: number) => void} onBlock
  */
-function walk(body, onContext, onBlock) {
+function walk(body, onGap, onContext, onBlock) {
   let block = 0;
   for (let i = 0; i < body.length;) {
-    if (body[i].kind === "ctx") {
-      onContext(body[i++]);
+    const l = body[i];
+    if (l.kind === "gap") {
+      onGap({ kind: "gap", count: l.count, title: l.title });
+      i++;
       continue;
     }
+    if (l.kind === "ctx") {
+      onContext(l);
+      i++;
+      continue;
+    }
+    /** @type {PatchLine[]} */
     const dels = [];
+    /** @type {PatchLine[]} */
     const adds = [];
-    while (i < body.length && body[i].kind === "del") dels.push(body[i++]);
-    while (i < body.length && body[i].kind === "add") adds.push(body[i++]);
+    while (i < body.length && body[i].kind === "del") dels.push(/** @type {PatchLine} */ (body[i++]));
+    while (i < body.length && body[i].kind === "add") adds.push(/** @type {PatchLine} */ (body[i++]));
     onBlock(dels, adds, block++);
   }
 }
@@ -98,11 +115,11 @@ function pairRanges(d, a) {
   return { del: [prefix, d.text.length - suffix], add: [prefix, a.text.length - suffix] };
 }
 
-/** @param {PatchLine[]} body */
+/** @param {(PatchLine | GapLine)[]} body */
 function splitRows(body) {
-  /** @type {SplitRow[]} */
+  /** @type {(SplitRow | GapRow)[]} */
   const out = [];
-  walk(body,
+  walk(body, (g) => out.push(g),
     (l) => out.push({ kind: "ctx", left: half(l, l.a), right: half(l, l.b) }),
     (dels, adds, block) => {
       for (let j = 0; j < Math.max(dels.length, adds.length); j++) {
@@ -121,9 +138,9 @@ function splitRows(body) {
   return out;
 }
 
-/** @param {PatchLine[]} body */
+/** @param {(PatchLine | GapLine)[]} body */
 function inlineRows(body) {
-  /** @type {InlineRow[]} */
+  /** @type {(InlineRow | GapRow)[]} */
   const out = [];
   /** @param {PatchLine} l @param {Partial<InlineRow>} extra @returns {InlineRow} */
   const row = (l, extra) => {
@@ -134,7 +151,7 @@ function inlineRows(body) {
     if (l.noeol) r.noeol = true;
     return Object.assign(r, extra);
   };
-  walk(body,
+  walk(body, (g) => out.push(g),
     (l) => out.push(row(l, {})),
     (dels, adds, block) => {
       dels.forEach((d, j) => {
