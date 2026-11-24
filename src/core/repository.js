@@ -13,6 +13,7 @@ export const DEBOUNCE_MS = 400;
 /** @typedef {import("./git.js").TimeoutClass} TimeoutClass */
 /** @typedef {{ machine: string | null, toplevel: string }} RepositoryKey */
 /** @typedef {{ summary: string, detail: string }} ActionError */
+/** @typedef {"merge" | "rebase" | "cherry-pick" | "revert" | "none"} Operation */
 /** @typedef {{ ok: boolean, error?: ActionError }} ActionResult */
 /**
  * @typedef {Readonly<{
@@ -20,6 +21,10 @@ export const DEBOUNCE_MS = 400;
  *   headOid: string | null,
  *   unborn: boolean,
  *   detached: boolean,
+ *   upstream: string | null,
+ *   ahead: number | null,
+ *   behind: number | null,
+ *   operation: Operation,
  *   groups: import("./status.js").ChangeGroups,
  *   running: import("./queue.js").QueueEntry | null,
  *   lastError: ActionError | null,
@@ -60,6 +65,33 @@ function pathspecBatches(paths) {
   return batches;
 }
 
+/**
+ * Files in the real (per-worktree) git dir that mark an Operation in progress, checked in order.
+ * A rebase is checked first: it can leave other markers behind while it runs. For the
+ * rebase folders we read `head-name`, which `git am` (also using rebase-apply/) doesn't write.
+ * @type {[string, Operation][]}
+ */
+const OPERATION_MARKERS = [
+  ["rebase-merge/head-name", "rebase"],
+  ["rebase-apply/head-name", "rebase"],
+  ["MERGE_HEAD", "merge"],
+  ["CHERRY_PICK_HEAD", "cherry-pick"],
+  ["REVERT_HEAD", "revert"],
+];
+
+/**
+ * The Operation in progress in `gitDir`, read from its marker files.
+ * @param {ReadTextFile} readTextFile @param {string | null} machine @param {string} gitDir
+ * @returns {Promise<Operation>}
+ */
+async function readOperation(readTextFile, machine, gitDir) {
+  const dir = gitDir.replace(/[\\/]+$/, "");
+  const found = await Promise.all(OPERATION_MARKERS.map(([file]) =>
+    readTextFile(`${dir}/${file}`, { on: machine }).then((text) => text !== null, () => false)));
+  const at = found.indexOf(true);
+  return at < 0 ? "none" : OPERATION_MARKERS[at][1];
+}
+
 /** @param {string} stderr @param {string} fallback @returns {ActionError} */
 function errorFrom(stderr, fallback) {
   const detail = stderr.trim();
@@ -67,15 +99,19 @@ function errorFrom(stderr, fallback) {
   return { summary: first.trim() || fallback, detail: detail || fallback };
 }
 
+/** @typedef {import("./platform.js").Platform["readTextFile"]} ReadTextFile */
+
 /**
- * With `platform` and `dirs`, the Repository watches its working tree and git
- * dirs until `dispose()`, refreshing (debounced) on relevant events.
- * @param {{ git: Git, key: RepositoryKey, queue?: import("./queue.js").Queue, platform?: import("./platform.js").Platform, dirs?: import("./watch-filter.js").RepositoryDirs }} deps
- *   `queue` is shared by every Repository with the same common git dir.
+ * @param {{ git: Git, key: RepositoryKey, queue?: import("./queue.js").Queue, gitDir?: string, readTextFile?: ReadTextFile, platform?: import("./platform.js").Platform, dirs?: import("./watch-filter.js").RepositoryDirs }} deps
+ *   `queue` is shared by every Repository with the same common git dir. `gitDir` is the
+ *   absolute real git dir (per worktree), where `readTextFile` looks for the Operation in
+ *   progress; without both, `operation` is always "none". With `platform` and `dirs`,
+ *   the Repository watches its working tree and git dirs until `dispose()`, refreshing
+ *   (debounced) on relevant events.
  */
-export function createRepository({ git, key, queue = createQueue(), platform, dirs }) {
+export function createRepository({ git, key, queue = createQueue(), gitDir, readTextFile, platform, dirs }) {
   key = Object.freeze({ machine: key.machine ?? null, toplevel: key.toplevel });
-  /** @type {ReturnType<typeof parseStatus> | null} */
+  /** @type {(ReturnType<typeof parseStatus> & { operation: Operation }) | null} */
   let status = null;
   /** @type {Snapshot | null} */
   let snapshot = null;
@@ -95,10 +131,13 @@ export function createRepository({ git, key, queue = createQueue(), platform, di
 
   /** Re-reads the repository from Git. @returns {Promise<ActionResult>} */
   async function readStatus() {
-    const r = await git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], { cwd: key.toplevel, read: true });
+    const [r, operation] = await Promise.all([
+      git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], { cwd: key.toplevel, read: true }),
+      gitDir && readTextFile ? readOperation(readTextFile, key.machine, gitDir) : /** @type {Operation} */ ("none"),
+    ]);
     if (!r.ok) return { ok: false, error: errorFrom(r.stderr, "git status failed") };
     if (disposed) return { ok: true };
-    status = parseStatus(r.stdout);
+    status = { ...parseStatus(r.stdout), operation };
     publish();
     return { ok: true };
   }
@@ -237,6 +276,29 @@ export function createRepository({ git, key, queue = createQueue(), platform, di
       if (!paths.length) return Promise.resolve({ ok: true });
       return act("Unstaging…", "short", (timeoutClass) =>
         runOnPaths(snapshot?.unborn ? ["reset", "-q"] : ["restore", "--staged"], paths, timeoutClass));
+    },
+
+    /**
+     * Throws away the working-tree changes to `paths`: tracked files are restored
+     * from the index (`git restore --worktree`), untracked ones are removed. It
+     * does not ask for confirmation; the panel does that first.
+     * @param {string[]} paths @returns {Promise<ActionResult>}
+     */
+    discard(paths) {
+      if (!paths.length) return Promise.resolve({ ok: true });
+      return act("Discarding…", "short", async (timeoutClass) => {
+        // Sorted by the snapshot current when the queue reaches this entry.
+        const untracked = new Set(snapshot?.groups.untracked.map((c) => c.path) ?? []);
+        const tracked = paths.filter((p) => !untracked.has(p));
+        const fresh = paths.filter((p) => untracked.has(p));
+        if (tracked.length) {
+          const error = await runOnPaths(["restore", "--worktree"], tracked, timeoutClass);
+          if (error) return error;
+        }
+        // `clean` without -d/-x removes only these untracked files, never ignored ones.
+        if (fresh.length) return runOnPaths(["clean", "-f", "-q"], fresh, timeoutClass);
+        return null;
+      });
     },
 
     /** True once the Workbench has let go of this Repository and its queue has drained. */

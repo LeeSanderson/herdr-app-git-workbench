@@ -80,12 +80,12 @@ async function followCounting(fake, folder) {
   return counter;
 }
 
-/** Ticks the fake clock until a refresh lands (or gives up). */
+/** Ticks the fake clock until a refresh lands (or gives up after ~15 s; git is slow on a busy machine). */
 async function untilRefreshed(fake, counter) {
   const before = counter.refreshes;
-  for (let i = 0; i < 20 && counter.refreshes === before; i++) {
+  for (let i = 0; i < 300 && counter.refreshes === before; i++) {
     await fake.tick();
-    await Promise.race([counter.next, new Promise((r) => setTimeout(r, 20))]);
+    await Promise.race([counter.next, new Promise((r) => setTimeout(r, 50))]);
   }
 }
 

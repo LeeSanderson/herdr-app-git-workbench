@@ -3,8 +3,10 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, home, theme, run, checking, nextCommand, window } from "herdr";
+import { spaces, home, theme, run, checking, nextCommand, openOverlay, window } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
+import { diffTargetFor } from "../core/diff-target.js";
+import { openDiff } from "./diff-tabs.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -49,6 +51,14 @@ export class SourceControlPanel {
     /** The lastError whose detail toggle is shown, and whether its detail is open. */
     this.shownError = null;
     this.showDetail = false;
+    /** The row the pointer is over (its id), which shows its 🗑. @type {string | null} */
+    this.hoveredRow = null;
+    /**
+     * The Change the confirm dialog asks about, and the snapshot it was taken from.
+     * Valid only for the next "discard", and only while that snapshot is current.
+     * @type {{ repositoryId: string, snapshot: any, change: import("../core/status.js").Change } | null}
+     */
+    this.pendingDiscard = null;
     this.handle = cx.focus_handle();
     /** What the last render saw of focus: the active space, window and panel focus. */
     this.seenFocus = { space: /** @type {string | null} */ (null), window: false, panel: false };
@@ -64,12 +74,47 @@ export class SourceControlPanel {
           const command = await nextCommand();
           if (command === "focus") {
             this.handle.focus();
-            this.refresh();
-          }
+            this.refreshForFocus();
+          } else if (command === "discard") this.confirmDiscard();
           cx.notify();
         }
       });
     }
+  }
+
+  /**
+   * Asks before discarding `change`: remembers it, then opens the shipped confirm
+   * dialog, whose Confirm runs our "discard" command. Cancel is invisible to us.
+   * @param {any} repository @param {import("../core/status.js").Change} change
+   */
+  askDiscard(repository, change) {
+    this.pendingDiscard = { repositoryId: repository.id, snapshot: repository.snapshot, change };
+    openOverlay({
+      mod: "confirm", kind: "dialog", modal: true, width: 420, height: 170,
+      props: {
+        title: "Discard changes?",
+        detail: `${printable(change.path)} will be restored. This cannot be undone.`,
+        command: { name: "herdr-app-git-workbench.discard" },
+      },
+    });
+  }
+
+  /**
+   * The "discard" command: discards the pending Change if it is still valid, that is,
+   * the same Repository has not refreshed since the dialog opened and the Change is
+   * still listed. The pending Change is used up either way.
+   */
+  confirmDiscard() {
+    const pending = this.pendingDiscard;
+    this.pendingDiscard = null;
+    if (!pending) return;
+    const state = this.workbench.state;
+    if (state.kind !== "ready" || state.repository.id !== pending.repositoryId) return;
+    const s = state.repository.snapshot;
+    if (s !== pending.snapshot) return;
+    const { group, path } = pending.change;
+    const listed = s.groups[group]?.some((c) => c.path === path);
+    if (listed && (group === "changes" || group === "untracked")) void state.repository.discard([path]);
   }
 
   /** Follows the active space when it changes. Render re-runs when spaces change. */
@@ -106,7 +151,21 @@ export class SourceControlPanel {
     };
     const was = this.seenFocus;
     this.seenFocus = now;
-    if (now.space !== was.space || (now.window && !was.window) || (now.panel && !was.panel)) this.refresh();
+    if (now.space !== was.space || (now.window && !was.window) || (now.panel && !was.panel)) this.refreshForFocus();
+  }
+
+  /**
+   * A focus-triggered refresh. Skipped while a discard confirmation is still valid:
+   * the confirm dialog closing gives the panel focus, possibly just before
+   * "discard" arrives, and a refresh landing first would void the Confirm.
+   * Once anything else refreshes, the pending Change is stale and this runs again.
+   */
+  refreshForFocus() {
+    const pending = this.pendingDiscard;
+    const state = this.workbench.state;
+    if (pending && state.kind === "ready" && state.repository.id === pending.repositoryId
+      && state.repository.snapshot === pending.snapshot) return;
+    this.refresh();
   }
 
   /** @param {import("gpui-kit").Context} _cx */
@@ -134,8 +193,19 @@ export class SourceControlPanel {
     if (state.kind === "ready" && state.repository.snapshot) {
       const s = state.repository.snapshot;
       bar.child(div().flex_none().text_color(t.muted).child("⎇"));
-      bar.child(div().min_w(0).truncate().font_weight(600).child(s.branch ?? "(detached HEAD)"));
+      if (s.detached) {
+        bar.child(div().flex_none().font_weight(600).text_color(t.ansi3).child("detached HEAD"));
+        if (s.headOid) bar.child(div().flex_none().text_size(11).text_color(t.dim).child(s.headOid.slice(0, 7)));
+      } else {
+        bar.child(div().flex_shrink(1).min_w(0).truncate().font_weight(600).child(s.branch ?? ""));
+      }
+      if (s.upstream !== null) {
+        bar.child(div().flex_none().text_color(t.dim).child("→"));
+        bar.child(div().flex_shrink(1).min_w(0).truncate().text_color(t.muted).child(s.upstream));
+      }
+      if (s.ahead !== null && s.behind !== null) bar.child(aheadBehindPill(t, s.ahead, s.behind));
       if (s.unborn) bar.child(div().flex_none().text_size(11).text_color(t.dim).child("no commits yet"));
+      if (s.operation !== "none") bar.child(operationBadge(t, s.operation));
     } else {
       bar.child(div().min_w(0).truncate().text_color(t.muted).child("Source Control"));
     }
@@ -182,6 +252,13 @@ export class SourceControlPanel {
           // Nothing is staged except what the user ticks. Results land in snapshot.lastError.
           stage: (changes) => void repository.stage(changes.map((c) => c.path)),
           unstage: (changes) => void repository.unstage(changes.flatMap(pathsOf)),
+          open: (change) => openDiff(diffTargetFor(repository.key, change)),
+          discard: (change) => this.askDiscard(repository, change),
+          hoveredRow: this.hoveredRow,
+          hover: (rowId, hovered) => {
+            if (hovered) this.hoveredRow = rowId;
+            else if (this.hoveredRow === rowId) this.hoveredRow = null;
+          },
         };
         return v_flex().flex_1().min_h(0)
           .when(s.running !== null, (e) => e.child(runningStrip(t, s.running.label)))
@@ -228,6 +305,10 @@ export class SourceControlPanel {
  *   busy: boolean,
  *   stage(changes: import("../core/status.js").Change[]): void,
  *   unstage(changes: import("../core/status.js").Change[]): void,
+ *   open(change: import("../core/status.js").Change): void,
+ *   discard(change: import("../core/status.js").Change): void,
+ *   hoveredRow: string | null,
+ *   hover(rowId: string, hovered: boolean): void,
  * }} Actions
  */
 
@@ -251,10 +332,38 @@ function changeLists(t, groups, actions) {
   return v_flex().flex_1().min_h(0)
     .child(listHeader(t, "Unstaged", unstaged.length,
       button(t, "stage-all", "Stage all", () => actions.stage(unstaged), actions.busy || !unstaged.length)))
+    .when(groups.conflicts.length > 0, (e) => e.child(conflictBanner(t, groups.conflicts.length)))
     .child(scrollArea("unstaged", unstaged.length ? unstaged.map(row) : [emptyNote(t, "No changes")]))
     .child(listHeader(t, "Staged", groups.staged.length,
       button(t, "unstage-all", "Unstage all", () => actions.unstage(groups.staged), actions.busy || !groups.staged.length)))
     .child(scrollArea("staged", groups.staged.length ? groups.staged.map(row) : [emptyNote(t, "Nothing staged")]));
+}
+
+/**
+ * The red banner above the Unstaged list while Conflicts remain. The Workbench never edits
+ * conflict content: the user fixes it in an editor, then ticks the row (which stages it).
+ * @param {Record<string, string>} t @param {number} count
+ */
+function conflictBanner(t, count) {
+  return div().id("conflict-banner").flex_none().px(10).py(6).text_size(11)
+    .bg(t.ansi1 + "22").text_color(t.ansi1).border_b_1().border_color(t.border)
+    .child(`${count} conflict(s): fix them in your editor, then tick to mark resolved`);
+}
+
+/** `↑ahead ↓behind` against the upstream. @param {Record<string, string>} t @param {number} ahead @param {number} behind */
+function aheadBehindPill(t, ahead, behind) {
+  return div().id("ahead-behind").flex_none().px(6).h(18).flex().items_center().rounded(9).text_size(11)
+    .bg(t.raised).text_color(ahead || behind ? t.foreground : t.dim)
+    .child(`↑${ahead} ↓${behind}`);
+}
+
+const OPERATION_LABELS = { merge: "Merging", rebase: "Rebasing", "cherry-pick": "Cherry-picking", revert: "Reverting" };
+
+/** The Operation in progress, e.g. "Merging". @param {Record<string, string>} t @param {string} operation */
+function operationBadge(t, operation) {
+  return div().id("operation").flex_none().px(6).h(18).flex().items_center().rounded(4).text_size(11)
+    .font_semibold().bg(t.ansi3 + "33").text_color(t.ansi3)
+    .child(OPERATION_LABELS[operation] ?? operation);
 }
 
 /** @param {Record<string, string>} t @param {string} label @param {number} count @param {any} action */
@@ -305,12 +414,24 @@ function emptyNote(t, text) {
 
 /**
  * One Change: a coloured status letter, the dim folder, the bold file name and, for a rename, its old path.
+ * Clicking it opens the Change's Diff view.
  * @param {Record<string, string>} t @param {import("../core/status.js").Change} change @param {Actions} actions
  */
 function changeRow(t, change, actions) {
   const path = printable(change.path);
-  const row = h_flex().id(`row-${change.group}:${change.path}`).flex_none().h(24).px(10).gap(8).items_center()
-    .hover((s) => s.bg(t.hover))
+  const rowId = `row-${change.group}:${change.path}`;
+  // Discard is offered only for unstaged edits and untracked files, never staged rows or Conflicts.
+  const discardable = change.group === "changes" || change.group === "untracked";
+  const row = h_flex().id(rowId).flex_none().h(24).px(10).gap(8).items_center()
+    .cursor_pointer().hover((s) => s.bg(t.hover))
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      actions.open(change);
+    })
+    .when(discardable, (e) => e.on_hover((hovered, cx) => {
+      actions.hover(rowId, hovered);
+      cx.notify();
+    }))
     .child(checkbox(t, change, actions))
     .child(div().flex_none().w(12).text_size(11).font_semibold().text_color(statusColor(t, change)).child(statusLetter(change)))
     .child(h_flex().flex_1().min_w(0)
@@ -318,6 +439,16 @@ function changeRow(t, change, actions) {
       .child(div().flex_none().font_semibold().child(nameOf(path))));
   if (change.oldPath !== undefined) {
     row.child(div().flex_shrink(1).min_w(0).max_w(160).truncate().text_size(11).text_color(t.dim).child(`← ${printable(change.oldPath)}`));
+  }
+  if (discardable && !actions.busy && actions.hoveredRow === rowId) {
+    row.child(div().id(`discard-${change.group}:${change.path}`).flex_none().w(18).h(18).rounded(3)
+      .flex().items_center().justify_center().text_size(11).cursor_pointer()
+      .hover((s) => s.bg(t.raised))
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        actions.discard(change);
+      })
+      .child("🗑"));
   }
   return row;
 }

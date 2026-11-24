@@ -5,6 +5,7 @@
 import { createGit, GitNotFound } from "./git.js";
 import { createRepository, repositoryId } from "./repository.js";
 import { createQueue, queueId } from "./queue.js";
+import { loadDiff } from "./diff.js";
 
 /** @typedef {import("./platform.js").Platform} Platform */
 /** @typedef {import("./queue.js").Queue} Queue */
@@ -41,16 +42,19 @@ export function createWorkbench(platform) {
   const queues = new Map();
 
   /**
-   * Creates a Repository on the queue for its common git dir (shared by Linked
-   * worktrees). It watches its working tree and git dirs until it is closed.
-   * @param {RepositoryKey} key @param {{ gitDir: string, commonDir: string }} dirs
+   * Creates a Repository on the queue for its common git dir (shared by Linked worktrees).
+   * It watches its working tree and git dirs until it is closed.
+   * @param {RepositoryKey} key @param {string} commonDir @param {string} gitDir
    */
-  function openRepository(key, { gitDir, commonDir }) {
+  function openRepository(key, commonDir, gitDir) {
     const qid = queueId({ machine: key.machine, commonDir });
     let slot = queues.get(qid);
     if (!slot) queues.set(qid, (slot = { queue: createQueue(), users: 0 }));
     slot.users++;
-    const repository = createRepository({ git, key, queue: slot.queue, platform, dirs: { root: key.toplevel, gitDir, commonDir } });
+    const repository = createRepository({
+      git, key, queue: slot.queue, gitDir, readTextFile: platform.readTextFile,
+      platform, dirs: { root: key.toplevel, gitDir, commonDir },
+    });
     const shared = slot;
     return {
       repository,
@@ -91,6 +95,15 @@ export function createWorkbench(platform) {
     },
 
     /**
+     * Loads a Diff target's DiffDocument. It needs no followed Repository and
+     * skips every queue. Rejects with DiffLoadError when git can't diff it.
+     * @param {import("./diff-target.js").DiffTarget} target
+     */
+    loadDiff(target) {
+      return loadDiff(git, target);
+    },
+
+    /**
      * Follows the Repository containing `folder` on `machine` (null = local).
      * A later call supersedes an earlier one still resolving.
      * @param {{ machine: string | null, folder: string }} where
@@ -99,19 +112,19 @@ export function createWorkbench(platform) {
       const mine = ++generation;
       const stale = () => mine !== generation;
       try {
-        const top = await git.run(machine, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd: folder, read: true });
+        const top = await git.run(machine, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir", "--git-dir"], { cwd: folder, read: true });
         if (stale()) return;
         if (!top.ok) {
           leave();
           return setState({ kind: "no-repository", folder });
         }
-        const [toplevel, gitDir, commonDir] = top.stdout.split("\n").map((l) => l.trim());
+        const [toplevel, commonDir, gitDir] = top.stdout.split("\n").map((l) => l.trim());
         const key = { machine: machine ?? null, toplevel };
         if (current?.repository.id === repositoryId(key) && state.kind === "ready") return;
 
         leave();
         setState({ kind: "loading", folder });
-        const opened = openRepository(key, { gitDir, commonDir });
+        const opened = openRepository(key, commonDir, gitDir);
         await opened.repository.refresh();
         if (stale()) {
           opened.close();
