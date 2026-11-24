@@ -8,6 +8,7 @@ import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } fr
 import { diffTargetFor } from "../core/diff-target.js";
 import { commitReadiness } from "../core/commit.js";
 import { openDiff } from "./diff-tabs.js";
+import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -72,6 +73,12 @@ export class SourceControlPanel {
     });
     /** True from a commit's start until it resolves, so one press can't commit twice. */
     this.committing = false;
+    /** The selected list row (keyboard). @type {import("../core/panel-keys.js").Selection | null} */
+    this.selection = null;
+    /** True while the commit box has the keyboard: the list keys stay off. */
+    this.typing = false;
+    this.message.on("focus", () => { this.typing = true; });
+    this.message.on("blur", () => { this.typing = false; });
     cx.spawn(async (cx) => {
       for (;;) {
         await nextChange(workbench);
@@ -86,6 +93,7 @@ export class SourceControlPanel {
             this.handle.focus();
             this.refreshForFocus();
           } else if (command === "discard") this.confirmDiscard();
+          else this.modCommand(command);
           cx.notify();
         }
       });
@@ -199,6 +207,77 @@ export class SourceControlPanel {
     }
   }
 
+  /**
+   * The mod commands power users bind or script (`herdr-app-git-workbench.<name>`).
+   * Only shown copies receive commands, so a hidden panel ignores them; Diff views
+   * have no command loop. Unknown names are ignored.
+   * @param {string} command
+   */
+  modCommand(command) {
+    if (command === "refresh") this.refresh();
+    else if (command === "stage_all") this.stageAll();
+    else if (command === "unstage_all") this.unstageAll();
+    else if (command === "commit") void this.commit();
+  }
+
+  /** The ready Repository and its snapshot, or null. */
+  current() {
+    const state = this.workbench.state;
+    if (state.kind !== "ready" || !state.repository.snapshot) return null;
+    return { repository: state.repository, s: state.repository.snapshot };
+  }
+
+  /** Stages every unstaged row (Conflicts are marked resolved), like the Stage all button. */
+  stageAll() {
+    const cur = this.current();
+    if (!cur || cur.s.running !== null) return;
+    const { groups } = cur.s;
+    const unstaged = [...groups.conflicts, ...groups.changes, ...groups.untracked];
+    if (unstaged.length) void cur.repository.stage(unstaged.map((c) => c.path));
+  }
+
+  /** Unstages every staged row, like the Unstage all button. */
+  unstageAll() {
+    const cur = this.current();
+    if (!cur || cur.s.running !== null || !cur.s.groups.staged.length) return;
+    void cur.repository.unstage(cur.s.groups.staged.flatMap(pathsOf));
+  }
+
+  /**
+   * The list keys: Up/Down select, Space stages/unstages (or marks a Conflict resolved),
+   * Enter opens the Diff view, Delete asks to discard, Tab goes to the commit box.
+   * Off while the commit box has the keyboard.
+   * @param {import("gpui-kit").KeyEvent} e @param {import("gpui-kit").Context} cx
+   */
+  onListKey(e, cx) {
+    if (this.typing || !this.handle.is_focused()) return;
+    const cur = this.current();
+    const rows = cur ? listRows(cur.s.groups) : [];
+    const selection = settleSelection(rows, this.selection);
+    const row = selection ? rows[selection.index] : null;
+    const action = listKeyAction(e.keystroke, row?.change ?? null);
+    if (!action) return;
+    cx.stop_propagation();
+    if (action === "commit-box") {
+      if (cur) this.message.focus();
+      return;
+    }
+    if (action === "up" || action === "down") {
+      this.selection = moveSelection(rows, selection, action === "up" ? -1 : 1);
+      cx.notify();
+      return;
+    }
+    if (!cur || !row) return;
+    const { repository, s } = cur;
+    const change = row.change;
+    if (action === "open") openDiff(diffTargetFor(repository.key, change));
+    else if (s.running !== null) return; // Stage/unstage/discard wait, as the disabled controls do.
+    else if (action === "toggle") {
+      if (change.group === "staged") void repository.unstage(pathsOf(change));
+      else void repository.stage([change.path]);
+    } else if (action === "discard") this.askDiscard(repository, change);
+  }
+
   /** @param {import("gpui-kit").Context} _cx */
   close(_cx) {
     this.message.release();
@@ -216,6 +295,7 @@ export class SourceControlPanel {
     return v_flex()
       .size_full()
       .track_focus(this.handle)
+      .on_key_down((e, cx) => this.onListKey(e, cx))
       .bg(t.surface)
       .text_color(t.foreground)
       .text_size(13)
@@ -282,13 +362,21 @@ export class SourceControlPanel {
         const { repository } = state;
         const s = repository.snapshot;
         if (!s) return screen(t, "Couldn't read the repository", repository.key.toplevel);
+        this.selection = settleSelection(listRows(s.groups), this.selection);
         /** @type {Actions} */
         const actions = {
           busy: s.running !== null,
           // Nothing is staged except what the user ticks. Results land in snapshot.lastError.
           stage: (changes) => void repository.stage(changes.map((c) => c.path)),
           unstage: (changes) => void repository.unstage(changes.flatMap(pathsOf)),
-          open: (change) => openDiff(diffTargetFor(repository.key, change)),
+          stageAll: () => this.stageAll(),
+          unstageAll: () => this.unstageAll(),
+          open: (change) => {
+            // A clicked row becomes the selected one, so the keys carry on from there.
+            this.selection = settleSelection(listRows(s.groups), { key: rowKey(change), index: 0 });
+            openDiff(diffTargetFor(repository.key, change));
+          },
+          selectedKey: this.selection?.key ?? null,
           discard: (change) => this.askDiscard(repository, change),
           hoveredRow: this.hoveredRow,
           hover: (rowId, hovered) => {
@@ -372,7 +460,10 @@ export class SourceControlPanel {
  *   busy: boolean,
  *   stage(changes: import("../core/status.js").Change[]): void,
  *   unstage(changes: import("../core/status.js").Change[]): void,
+ *   stageAll(): void,
+ *   unstageAll(): void,
  *   open(change: import("../core/status.js").Change): void,
+ *   selectedKey: string | null,
  *   discard(change: import("../core/status.js").Change): void,
  *   hoveredRow: string | null,
  *   hover(rowId: string, hovered: boolean): void,
@@ -398,11 +489,11 @@ function changeLists(t, groups, actions) {
   const row = (c) => changeRow(t, c, actions);
   return v_flex().flex_1().min_h(0)
     .child(listHeader(t, "Unstaged", unstaged.length,
-      button(t, "stage-all", "Stage all", () => actions.stage(unstaged), actions.busy || !unstaged.length)))
+      button(t, "stage-all", "Stage all", () => actions.stageAll(), actions.busy || !unstaged.length)))
     .when(groups.conflicts.length > 0, (e) => e.child(conflictBanner(t, groups.conflicts.length)))
     .child(scrollArea("unstaged", unstaged.length ? unstaged.map(row) : [emptyNote(t, "No changes")]))
     .child(listHeader(t, "Staged", groups.staged.length,
-      button(t, "unstage-all", "Unstage all", () => actions.unstage(groups.staged), actions.busy || !groups.staged.length)))
+      button(t, "unstage-all", "Unstage all", () => actions.unstageAll(), actions.busy || !groups.staged.length)))
     .child(scrollArea("staged", groups.staged.length ? groups.staged.map(row) : [emptyNote(t, "Nothing staged")]));
 }
 
@@ -487,10 +578,11 @@ function emptyNote(t, text) {
 function changeRow(t, change, actions) {
   const path = printable(change.path);
   const rowId = `row-${change.group}:${change.path}`;
+  const selected = actions.selectedKey === rowKey(change);
   // Discard is offered only for unstaged edits and untracked files, never staged rows or Conflicts.
   const discardable = change.group === "changes" || change.group === "untracked";
   const row = h_flex().id(rowId).flex_none().h(24).px(10).gap(8).items_center()
-    .cursor_pointer().hover((s) => s.bg(t.hover))
+    .cursor_pointer().when(selected, (e) => e.bg(t.raised)).hover((s) => s.bg(t.hover))
     .on_click((_e, cx) => {
       cx.stop_propagation();
       actions.open(change);
