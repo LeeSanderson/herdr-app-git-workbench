@@ -211,6 +211,29 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
         runOnPaths(snapshot?.unborn ? ["reset", "-q"] : ["restore", "--staged"], paths, timeoutClass));
     },
 
+    /**
+     * Throws away the working-tree changes to `paths`: tracked files are restored
+     * from the index (`git restore --worktree`), untracked ones are removed. It
+     * does not ask for confirmation; the panel does that first.
+     * @param {string[]} paths @returns {Promise<ActionResult>}
+     */
+    discard(paths) {
+      if (!paths.length) return Promise.resolve({ ok: true });
+      return act("Discarding…", "short", async (timeoutClass) => {
+        // Sorted by the snapshot current when the queue reaches this entry.
+        const untracked = new Set(snapshot?.groups.untracked.map((c) => c.path) ?? []);
+        const tracked = paths.filter((p) => !untracked.has(p));
+        const fresh = paths.filter((p) => untracked.has(p));
+        if (tracked.length) {
+          const error = await runOnPaths(["restore", "--worktree"], tracked, timeoutClass);
+          if (error) return error;
+        }
+        // `clean` without -d/-x removes only these untracked files, never ignored ones.
+        if (fresh.length) return runOnPaths(["clean", "-f", "-q"], fresh, timeoutClass);
+        return null;
+      });
+    },
+
     /** True once the Workbench has let go of this Repository and its queue has drained. */
     get disposed() {
       return disposed;
