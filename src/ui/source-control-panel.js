@@ -5,6 +5,8 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, home, theme, run, checking, nextCommand } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
+import { diffTargetFor } from "../core/diff-target.js";
+import { openDiff } from "./diff-tabs.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -130,7 +132,7 @@ export class SourceControlPanel {
         return screen(t, "Loading…", "");
       case "ready":
         if (!state.repository.snapshot) return screen(t, "Couldn't read the repository", state.repository.key.toplevel);
-        return changeLists(t, state.repository.snapshot.groups);
+        return changeLists(t, state.repository.snapshot.groups, (change) => openDiff(diffTargetFor(state.repository.key, change)));
       default:
         return div();
     }
@@ -140,14 +142,15 @@ export class SourceControlPanel {
 /**
  * The two stacked lists: Unstaged (Conflicts, Changes, Untracked) above, Staged below.
  * @param {Record<string, string>} t @param {import("../core/status.js").ChangeGroups} groups
+ * @param {(change: import("../core/status.js").Change) => void} open opens a Change's Diff view
  */
-function changeLists(t, groups) {
+function changeLists(t, groups, open) {
   const unstaged = [...groups.conflicts, ...groups.changes, ...groups.untracked];
   return v_flex().flex_1().min_h(0)
     .child(listHeader(t, "Unstaged", unstaged.length))
-    .child(scrollArea("unstaged", unstaged.length ? unstaged.map((c) => changeRow(t, c)) : [emptyNote(t, "No changes")]))
+    .child(scrollArea("unstaged", unstaged.length ? unstaged.map((c) => changeRow(t, c, open)) : [emptyNote(t, "No changes")]))
     .child(listHeader(t, "Staged", groups.staged.length))
-    .child(scrollArea("staged", groups.staged.length ? groups.staged.map((c) => changeRow(t, c)) : [emptyNote(t, "Nothing staged")]));
+    .child(scrollArea("staged", groups.staged.length ? groups.staged.map((c) => changeRow(t, c, open)) : [emptyNote(t, "Nothing staged")]));
 }
 
 /** @param {Record<string, string>} t @param {string} label @param {number} count */
@@ -163,12 +166,18 @@ function emptyNote(t, text) {
 
 /**
  * One Change: a coloured status letter, the dim folder, the bold file name and, for a rename, its old path.
+ * Clicking it opens the Change's Diff view.
  * @param {Record<string, string>} t @param {import("../core/status.js").Change} change
+ * @param {(change: import("../core/status.js").Change) => void} open
  */
-function changeRow(t, change) {
+function changeRow(t, change, open) {
   const path = printable(change.path);
   const row = h_flex().id(`row-${change.group}:${change.path}`).flex_none().h(24).px(10).gap(8).items_center()
-    .hover((s) => s.bg(t.hover))
+    .cursor_pointer().hover((s) => s.bg(t.hover))
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      open(change);
+    })
     .child(div().flex_none().w(12).text_size(11).font_semibold().text_color(statusColor(t, change)).child(statusLetter(change)))
     .child(h_flex().flex_1().min_w(0)
       .child(div().flex_shrink(1).min_w(0).truncate().text_color(t.dim).child(folderOf(path)))
