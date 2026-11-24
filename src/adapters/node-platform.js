@@ -6,6 +6,17 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+/** Cancels of every watch still open. */
+const openWatches = new Set();
+
+/**
+ * Stops every watch still open. On Windows a watched folder can't be deleted
+ * (EBUSY), so test cleanup calls this before removing temp repositories.
+ */
+export function closeAllWatches() {
+  for (const cancel of [...openWatches]) cancel();
+}
+
 /** @type {import("../core/platform.js").Platform} */
 export const nodePlatform = {
   exec(cmd, args, { cwd, timeout = 30_000 } = {}) {
@@ -27,9 +38,11 @@ export const nodePlatform = {
     const cancel = () => {
       if (done) return;
       done = true;
+      openWatches.delete(cancel);
       watcher.close();
       wake?.();
     };
+    openWatches.add(cancel);
     const watcher = fs.watch(dir, { recursive: true, persistent: false }, (_event, filename) => {
       // On Windows, deleting the watched folder (test cleanup) makes the watcher
       // fire endlessly with bogus `?\C:\...` names: end the watch instead.
