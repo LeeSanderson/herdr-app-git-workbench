@@ -279,6 +279,22 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
     },
 
     /**
+     * Commits what is staged with `message` as one `-m` argument, so Git sees it
+     * exactly as typed. Hooks run as on the command line; a failure's `detail` is
+     * Git's full output, hook output included. Runs with the long timeout.
+     * `amend: true` adds `--amend` (Phase 2; the Phase 1 UI never passes it).
+     * @param {{ message: string, amend?: boolean }} options @returns {Promise<ActionResult>}
+     */
+    commit({ message, amend = false }) {
+      return act("Committing…", "long", async (timeoutClass) => {
+        const args = ["commit", ...(amend ? ["--amend"] : []), "-m", message];
+        const r = await git.run(key.machine, args, { cwd: key.toplevel, timeoutClass });
+        // Hooks write to stderr; Git's own refusals ("nothing to commit") go to stdout.
+        return r.ok ? null : errorFrom([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
+      });
+    },
+
+    /**
      * Throws away the working-tree changes to `paths`: tracked files are restored
      * from the index (`git restore --worktree`), untracked ones are removed. It
      * does not ask for confirmation; the panel does that first.
