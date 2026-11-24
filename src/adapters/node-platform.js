@@ -24,24 +24,30 @@ export const nodePlatform = {
     let wake = null;
     let done = false;
     // Not persistent: a watch left running must not keep a test process alive.
+    const cancel = () => {
+      if (done) return;
+      done = true;
+      watcher.close();
+      wake?.();
+    };
     const watcher = fs.watch(dir, { recursive: true, persistent: false }, (_event, filename) => {
+      // On Windows, deleting the watched folder (test cleanup) makes the watcher
+      // fire endlessly with bogus `?\C:\...` names: end the watch instead.
+      if (!fs.existsSync(dir)) return cancel();
       if (!filename) return;
       queue.push(path.join(dir, filename.toString()));
       wake?.();
     });
+    watcher.on("error", cancel);
     return {
       events: (async function* () {
         while (!done) {
           if (!queue.length) await new Promise((r) => (wake = r));
           wake = null;
-          if (queue.length) yield queue.splice(0);
+          if (queue.length && !done) yield queue.splice(0);
         }
       })(),
-      cancel() {
-        done = true;
-        watcher.close();
-        wake?.();
-      },
+      cancel,
     };
   },
 

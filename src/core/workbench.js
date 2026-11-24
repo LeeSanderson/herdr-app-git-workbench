@@ -4,8 +4,10 @@
 
 import { createGit, GitNotFound } from "./git.js";
 import { createRepository, repositoryId } from "./repository.js";
+import { createQueue, queueId } from "./queue.js";
 
 /** @typedef {import("./platform.js").Platform} Platform */
+/** @typedef {import("./queue.js").Queue} Queue */
 /** @typedef {import("./repository.js").Repository} Repository */
 /** @typedef {import("./repository.js").RepositoryKey} RepositoryKey */
 /**
@@ -25,7 +27,7 @@ export function createWorkbench(platform) {
   const listeners = new Set();
   /** @type {Map<string, Repository>} Repository id → Repository */
   const repositories = new Map();
-  /** @type {Repository | null} */
+  /** @type {{ repository: Repository, close(): Promise<void> } | null} the followed Repository */
   let current = null;
   let generation = 0;
 
@@ -35,12 +37,36 @@ export function createWorkbench(platform) {
     for (const fn of [...listeners]) fn();
   }
 
-  /** Stops following `current`: its watch stops and it is disposed. */
+  /** @type {Map<string, { queue: Queue, users: number }>} queue id → queue shared by Repositories of one common dir */
+  const queues = new Map();
+
+  /**
+   * Creates a Repository on the queue for its common git dir (shared by Linked
+   * worktrees). It watches its working tree and git dirs until it is closed.
+   * @param {RepositoryKey} key @param {{ gitDir: string, commonDir: string }} dirs
+   */
+  function openRepository(key, { gitDir, commonDir }) {
+    const qid = queueId({ machine: key.machine, commonDir });
+    let slot = queues.get(qid);
+    if (!slot) queues.set(qid, (slot = { queue: createQueue(), users: 0 }));
+    slot.users++;
+    const repository = createRepository({ git, key, queue: slot.queue, platform, dirs: { root: key.toplevel, gitDir, commonDir } });
+    const shared = slot;
+    return {
+      repository,
+      /** Disposes the Repository (stopping its watch) once its queue drains, and drops the queue when nothing else uses it. */
+      async close() {
+        await shared.queue.drained();
+        repository.dispose();
+        if (--shared.users === 0 && queues.get(qid) === shared) queues.delete(qid);
+      },
+    };
+  }
+
+  /** Stops following `current`; it is disposed once its queue drains. */
   function leave() {
-    if (current) {
-      repositories.delete(current.id);
-      current.dispose();
-    }
+    if (current) repositories.delete(current.repository.id);
+    current?.close();
     current = null;
   }
 
@@ -79,18 +105,21 @@ export function createWorkbench(platform) {
           leave();
           return setState({ kind: "no-repository", folder });
         }
-        const [toplevel, gitDir, commonDir] = top.stdout.split(/\r?\n/);
+        const [toplevel, gitDir, commonDir] = top.stdout.split("\n").map((l) => l.trim());
         const key = { machine: machine ?? null, toplevel };
-        if (current?.id === repositoryId(key) && state.kind === "ready") return;
+        if (current?.repository.id === repositoryId(key) && state.kind === "ready") return;
 
         leave();
         setState({ kind: "loading", folder });
-        const repository = createRepository({ git, key, platform, dirs: { root: toplevel, gitDir, commonDir } });
-        await repository.refresh();
-        if (stale()) return repository.dispose();
-        current = repository;
-        repositories.set(repository.id, repository);
-        setState({ kind: "ready", repository });
+        const opened = openRepository(key, { gitDir, commonDir });
+        await opened.repository.refresh();
+        if (stale()) {
+          opened.close();
+          return;
+        }
+        current = opened;
+        repositories.set(opened.repository.id, opened.repository);
+        setState({ kind: "ready", repository: opened.repository });
       } catch (err) {
         if (stale()) return;
         if (!(err instanceof GitNotFound)) throw err;
