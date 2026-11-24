@@ -15,6 +15,7 @@ import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } fr
 import { props, theme, settings, shared, setShared } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf } from "./theme.js";
 import { claimTab } from "./diff-tabs.js";
+import { displaySegments } from "../core/display.js";
 import { changeAnchors } from "../core/rows.js";
 
 /** @typedef {import("../core/diff-target.js").DiffTarget} DiffTarget */
@@ -33,7 +34,6 @@ const setDiffMode = (mode) => setShared(MODE_KEY, mode);
 const NEXT_KEYS = new Set(["n", "f7"]);
 const PREV_KEYS = new Set(["p", "shift-f7"]);
 
-const TAB = 4;
 const TINT = "1c"; // ~11% alpha
 const STRONG = "55"; // ~33% alpha, the changed part of a modified line
 
@@ -46,34 +46,6 @@ const BADGES = {
   untracked: ["Untracked", "ansi2"],
   conflicts: ["Conflict", "ansi1"],
 };
-
-/**
- * Splits a raw line into display segments: tabs expanded to 4-column stops, a
- * CR shown as ␍, and the `changed` range marked.
- * @param {string} text @param {[number, number] | undefined} changed
- * @returns {{ s: string, hl: boolean }[]}
- */
-function segments(text, changed) {
-  const cuts = changed ? [[0, changed[0], false], [changed[0], changed[1], true], [changed[1], text.length, false]] : [[0, text.length, false]];
-  let col = 0;
-  const out = [];
-  for (const [from, to, hl] of /** @type {[number, number, boolean][]} */ (cuts)) {
-    let s = "";
-    for (let i = from; i < to; i++) {
-      const c = text[i];
-      if (c === "\t") {
-        const n = TAB - (col % TAB);
-        s += " ".repeat(n);
-        col += n;
-      } else {
-        s += c === "\r" ? "␍" : c;
-        col++;
-      }
-    }
-    if (s) out.push({ s, hl });
-  }
-  return out;
-}
 
 export class DiffView {
   /** @param {ReturnType<import("../core/workbench.js").createWorkbench>} workbench @param {import("gpui-kit").Context} cx */
@@ -163,6 +135,7 @@ export class DiffView {
     const mode = diffMode();
     return root
       .child(this.header(t, this.target, mode))
+      .when(!!this.doc?.notice, (e) => e.child(this.noticeBand(t, /** @type {string} */ (this.doc?.notice))))
       .child(v_flex().flex_1().min_h(0).font_family(settings().font_family ?? "monospace").text_size(fontSize()).child(this.body(t, mode)));
   }
 
@@ -176,8 +149,12 @@ export class DiffView {
         .text_size(10).font_semibold().text_color(color).child(statusLetter(target)))
       .child(h_flex().min_w(0).flex_shrink(1)
         .child(div().flex_shrink(1).min_w(0).truncate().text_color(t.dim).child(folderOf(path)))
-        .child(div().flex_none().font_semibold().child(nameOf(path))))
-      .child(div().flex_none().px(6).rounded(4).text_size(10).bg(t[slot] + "33").text_color(t[slot]).child(label));
+        .child(div().flex_none().font_semibold().child(nameOf(path))));
+    if (target.oldPath !== target.newPath) {
+      const similarity = this.doc?.similarity != null ? ` (${this.doc.similarity}%)` : "";
+      bar.child(div().flex_shrink(1).min_w(0).truncate().text_color(t.dim).child(`← ${printable(target.oldPath)}${similarity}`));
+    }
+    bar.child(div().flex_none().px(6).rounded(4).text_size(10).bg(t[slot] + "33").text_color(t[slot]).child(label));
     if (this.doc) {
       bar.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${this.doc.adds}`))
         .child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${this.doc.dels}`));
@@ -185,6 +162,15 @@ export class DiffView {
     bar.child(div().flex_1());
     if (this.doc) bar.child(this.navigator(t, mode));
     return bar.child(this.modeSwitch(t, mode));
+  }
+
+  /**
+   * The thin notice band under the header (binary, new, deleted, untracked, mode change).
+   * @param {Record<string, string>} t @param {string} text
+   */
+  noticeBand(t, text) {
+    return div().flex_none().px(12).py(3).border_b_1().border_color(t.border).bg(t.raised)
+      .text_size(11).text_color(t.muted).truncate().child(text);
   }
 
   /** "Change k of N" with ↑/↓ buttons. @param {Record<string, string>} t @param {RowMode} mode */
@@ -220,6 +206,7 @@ export class DiffView {
   body(t, mode) {
     if (this.error && !this.doc) return div().p(16).text_color(t.ansi1).child(this.error);
     if (!this.doc) return div().p(16).text_color(t.dim).child("Loading diff…");
+    if (this.doc.binary) return div().p(16).text_color(t.dim).child("Binary file changed");
     const rows = this.doc.rows(mode);
     if (!rows.length) return div().p(16).text_color(t.dim).child("No text changes");
     const h = rowH();
@@ -286,7 +273,7 @@ export class DiffView {
    * @param {string} text @param {[number, number] | undefined} changed @param {string} base
    */
   text(text, changed, base) {
-    const segs = segments(text, changed);
+    const segs = displaySegments(text, changed);
     return h_flex().flex_1().min_w(0).overflow_hidden().whitespace_nowrap()
       .children(segs.length
         ? segs.map((g, i) => (i === segs.length - 1 ? div().truncate() : div().flex_none()).when(g.hl, (e) => e.bg(base + STRONG).rounded(2)).child(g.s))
