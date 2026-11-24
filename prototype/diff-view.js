@@ -30,7 +30,8 @@ const MOD = "herdr-app-git-workbench";
 const PROTO = "gitwb.diffproto";
 const SAMPLE = () => `${home().replace(/\\/g, "/")}/gitwb-diff-sample-PROTOTYPE`;
 
-const DEFAULTS = { mode: "side", pairing: "index", intraline: true, long: "truncate", onesided: "inline", limit: 5000, repo: "active" };
+const DEFAULTS = { mode: "side", pairing: "index", intraline: true, long: "pan", onesided: "keep", limit: 5000, repo: "active" };
+const LONG = ["pan", "truncate", "hscroll", "wrap"];
 const proto = () => ({ ...DEFAULTS, ...(shared(PROTO) ?? {}) });
 const setProto = (patch) => setShared(PROTO, { ...proto(), ...patch });
 const cycle = (list, v) => list[(list.indexOf(v) + 1) % list.length];
@@ -258,6 +259,7 @@ class DiffView {
     this.handle = cx.focus_handle();
     this.scroll = VirtualListScrollHandle.new();
     this.model = null; this.meta = null; this.error = null; this.current = 0; this.loadedLimit = null;
+    this.pan = 0; this.bodyW = null; this.drag = null;
     this.handle.focus();
     this.load(cx);
   }
@@ -297,42 +299,101 @@ class DiffView {
     if (!b || !b.anchors.length) return;
     this.current = (this.current + delta + b.anchors.length) % b.anchors.length;
     this.scroll.scroll_to_item(b.anchors[this.current], "center");
+    if (proto().long === "pan") this.panToChange(b);
     cx.notify();
   }
+
+  // Pan so the first changed column of the current change is on screen.
+  panToChange(b) {
+    const mode = this.effectiveMode(), cols = this.textCols(mode);
+    let first = Infinity;
+    const lead = (s) => (s ?? "").length - (s ?? "").trimStart().length;
+    for (const r of b.rows) {
+      if (r.block !== this.current) continue;
+      if (mode === "side") {
+        if (r.L && r.R) first = Math.min(first, intraline(r.L.text, r.R.text).p);
+        else first = Math.min(first, lead((r.L ?? r.R).text));
+      } else first = Math.min(first, r.pair ? (r.kind === "del" ? intraline(r.text, r.pair.text).p : intraline(r.pair.text, r.text).p) : lead(r.text));
+    }
+    if (first === Infinity) return;
+    if (first < this.pan + 4 || first > this.pan + cols - 12) this.setPan(first - 12);
+  }
+
+  maxPan() { return Math.max(0, (this.built?.longest ?? 0) - this.textCols(this.effectiveMode()) + 4); }
+  setPan(v) { this.pan = Math.round(Math.max(0, Math.min(this.maxPan(), v))); }
 
   onKey(e, cx) {
     const k = e.keystroke, p = proto();
     if (k === "n" || k === "alt-down" || k === "f7") this.go(1, cx);
     else if (k === "p" || k === "alt-up" || k === "shift-f7") this.go(-1, cx);
     else if (k === "i") setProto({ mode: p.mode === "side" ? "inline" : "side" });
-    else if (k === "w") setProto({ long: cycle(["truncate", "hscroll", "wrap"], p.long) });
+    else if (k === "w") setProto({ long: cycle(LONG, p.long) });
     else if (k === "r") this.load(cx);
+    else if (p.long === "pan" && (k === "right" || k === "left")) { this.setPan(this.pan + (k === "right" ? 8 : -8)); cx.notify(); }
+    else if (p.long === "pan" && k === "home") { this.setPan(0); cx.notify(); }
     else return;
     cx.stop_propagation();
   }
 
+  onWheel(e, cx) {
+    if (e.bounds && e.bounds.width !== this.bodyW) this.bodyW = e.bounds.width;
+    if (proto().long !== "pan") return;
+    let dx = e.delta.x;
+    if (!dx && e.modifiers.shift) dx = e.delta.y;
+    if (!dx || Math.abs(dx) < Math.abs(e.delta.y) && !e.modifiers.shift) return;
+    this.setPan(this.pan - dx / charW());
+    cx.stop_propagation();
+    cx.notify();
+  }
+
   // --- geometry ---
   gutterW() { return Math.ceil(Math.max(4, String(this.meta?.lines ?? 0).length) * charW()) + 12; }
-  // Hard-wrap column count, from the window width (the tab spans the window, less any docked panel).
-  wrapCols(mode) {
-    const vw = globalThis.window?.viewport_size?.().width ?? 1200;
-    const usable = vw - 24; // scrollbar and padding
+  // Width of the diff body: measured from mouse events over it, estimated from the window until then.
+  bodyWidth() { return this.bodyW ?? (globalThis.window?.viewport_size?.().width ?? 1400) - 300; }
+  // Text columns per side (side by side) or for the one text column (inline).
+  textCols(mode) {
+    const usable = this.bodyWidth() - 16; // vertical scrollbar
     const perSide = mode === "side" ? (usable - 2 * this.gutterW() - 8) / 2 : usable - 2 * this.gutterW() - 20;
-    return Math.max(20, Math.floor(perSide / charW()));
+    return Math.max(20, Math.floor(perSide / charW()) - 1);
   }
 
   // --- cells ---
   textCell(t, text, kind, pairText, flexOne, intra) {
     const strong = kind === "add" ? t.ansi2 + "55" : t.ansi1 + "55";
+    const pan = proto().long === "pan" ? this.pan : 0;
     const el = h_flex().min_w(0).overflow_hidden().whitespace_nowrap();
     const sized = flexOne ? el.flex_1() : el.flex_none();
-    if (!intra || pairText == null || (kind !== "add" && kind !== "del")) return sized.child(div().truncate().child(text || " "));
-    const { p, s } = kind === "del" ? intraline(text, pairText) : intraline(pairText, text);
-    const mid = text.slice(p, text.length - s);
+    // Segments of the whole line, then cut `pan` columns off the front.
+    let segs = [{ s: text, hl: false }];
+    if (intra && pairText != null && (kind === "add" || kind === "del")) {
+      const { p, s } = kind === "del" ? intraline(text, pairText) : intraline(pairText, text);
+      segs = [{ s: text.slice(0, p), hl: false }, { s: text.slice(p, text.length - s), hl: true }, { s: text.slice(text.length - s), hl: false }];
+    }
+    let skip = pan;
+    segs = segs.map((g) => { const cut = Math.min(skip, g.s.length); skip -= cut; return { ...g, s: g.s.slice(cut) }; }).filter((g) => g.s.length);
+    const hidden = pan > 0 && text.length > 0 && text.slice(0, pan).trim().length > 0;
     return sized
-      .child(div().flex_none().child(text.slice(0, p)))
-      .when(mid.length > 0, (e) => e.child(div().flex_none().bg(strong).rounded(2).child(mid)))
-      .child(div().truncate().child(text.slice(text.length - s) || (p === 0 && !mid ? " " : "")));
+      .when(pan > 0, (e) => e.child(div().w(charW()).flex_none().text_color(t.accent).child(hidden ? "‹" : "")))
+      .children(segs.length ? segs.map((g, i) => (i === segs.length - 1 ? div().truncate() : div().flex_none()).when(g.hl, (e) => e.bg(strong).rounded(2)).child(g.s)) : [div().child(" ")]);
+  }
+
+  rowLen(r) { return r.kind === "gap" ? 0 : r.L !== undefined || r.R !== undefined ? Math.max(r.L?.text.length ?? 0, r.R?.text.length ?? 0) : (r.text ?? "").length; }
+
+  // Our own horizontal scrollbar for pan mode: click or drag the track; the thumb is the visible share.
+  panBar(t, mode) {
+    const cols = this.textCols(mode), total = cols + this.maxPan();
+    const share = Math.max(0.05, cols / total), at = this.pan / Math.max(1, total);
+    const toPan = (x, b) => this.setPan(((x - b.x) / b.width) * total - cols / 2);
+    return h_flex().id("pan-bar").flex_none().h(12).px(4).items_center().bg(t.chrome).border_t(1).border_color(t.border)
+      .child(div().id("pan-track").flex_1().h(8).relative().rounded(4).bg(t.raised).cursor_pointer()
+        .on_mouse_down("left", (e, cx) => { if (e.bounds) { this.drag = e.bounds; toPan(e.position.x, e.bounds); cx.notify(); } })
+        .child(div().absolute().top(0).h(8).rounded(4).bg(t.muted).left(`${(at * 100).toFixed(2)}%`).w(`${(share * 100).toFixed(2)}%`)));
+  }
+
+  // Hard-wrapped lines, each exactly one row tall so the row size the list was given holds.
+  wrapped(lines) {
+    return v_flex().flex_1().min_w(0).overflow_hidden()
+      .children(lines.map((l) => div().h(rowH()).line_height(rowH()).flex_none().overflow_hidden().whitespace_nowrap().child(l || " ")));
   }
 
   gutter(t, n, kind) {
@@ -360,16 +421,16 @@ class DiffView {
       const lines = p.long === "wrap" ? chunks(cell?.text ?? "", cols) : [cell?.text ?? ""];
       const tint = kind === "empty" ? t.canvas : this.bg(t, kind);
       const content = p.long === "wrap"
-        ? v_flex().flex_1().min_w(0).children(lines.map((l, i) => h_flex().h(rowH()).child(div().whitespace_nowrap().child(l || " "))))
+        ? this.wrapped(lines)
         : this.textCell(t, cell?.text ?? "", kind, row.kind === "mod" ? pairCell?.text : null, p.long !== "hscroll", p.intraline && row.kind === "mod");
-      return h_flex().h_full().items_start()
+      return h_flex().h_full().items_start().overflow_hidden()
         .when(p.long === "hscroll", (e) => e.w(hscrollW).flex_none()).when(p.long !== "hscroll", (e) => e.flex_1().min_w(0))
         .when(!!tint, (e) => e.bg(tint))
         .child(this.gutter(t, side === "L" ? cell?.a : cell?.b, kind))
         .child(content)
         .when(!!cell?.noeol, (e) => e.child(div().flex_none().px(4).text_color(t.ansi1).child("⊘ no newline")));
     };
-    return h_flex().w_full().h(h).flex_none().items_start()
+    return h_flex().w_full().h(h).flex_none().items_start().overflow_hidden()
       .child(this.marker(t, row.block))
       .child(half(row.L, "L"))
       .child(div().w(1).h_full().flex_none().bg(t.border))
@@ -381,9 +442,9 @@ class DiffView {
     if (row.kind === "gap") return this.gapRow(t, row, h);
     const lines = p.long === "wrap" ? chunks(row.text, cols) : [row.text];
     const content = p.long === "wrap"
-      ? v_flex().flex_1().min_w(0).children(lines.map((l) => h_flex().h(rowH()).child(div().whitespace_nowrap().child(l || " "))))
+      ? this.wrapped(lines)
       : this.textCell(t, row.text, row.kind, row.pair?.text, p.long !== "hscroll", p.intraline);
-    return h_flex().w_full().h(h).flex_none().items_start()
+    return h_flex().w_full().h(h).flex_none().items_start().overflow_hidden()
       .when(p.long === "hscroll", (e) => e.min_w(hscrollW))
       .when(!!this.bg(t, row.kind), (e) => e.bg(this.bg(t, row.kind)))
       .child(this.marker(t, row.block))
@@ -438,11 +499,11 @@ class DiffView {
       .child(div().text_size(10).font_semibold().text_color(t.accent).child("PROTOTYPE"))
       .child(chip(t, "pairing", `Pairing: ${p.pairing} ▸`, () => setProto({ pairing: cycle(["index", "none"], p.pairing) })))
       .child(chip(t, "intra", `Intra-line: ${p.intraline ? "on" : "off"}`, () => setProto({ intraline: !p.intraline })))
-      .child(chip(t, "long", `Long lines: ${p.long} ▸`, () => setProto({ long: cycle(["truncate", "hscroll", "wrap"], p.long) })))
+      .child(chip(t, "long", `Long lines: ${p.long} ▸`, () => setProto({ long: cycle(LONG, p.long) })))
       .child(chip(t, "onesided", `New/deleted: ${p.onesided} ▸`, () => setProto({ onesided: cycle(["inline", "keep"], p.onesided) })))
       .child(chip(t, "limit", `Limit: ${p.limit} lines ▸`, (cx) => { setProto({ limit: cycle([500, 5000, 50000], p.limit) }); }))
       .child(div().flex_1())
-      .child(div().text_size(10).text_color(t.dim).child(m ? `${m.whole ? "whole file" : "changed sections"} · ${this.model?.rows.length ?? 0} rows · git ${m.ms} ms · keys n/p i w r` : ""));
+      .child(div().text_size(10).text_color(t.dim).child(m ? `${m.whole ? "whole file" : "changed sections"} · ${this.model?.rows.length ?? 0} rows · git ${m.ms} ms · keys n/p i w r, ←/→ home pans` : ""));
   }
 
   render(cx) {
@@ -457,7 +518,7 @@ class DiffView {
     else if (!this.model.rows.length) body = div().p(16).text_color(t.dim).child("No text changes (mode or whitespace only?)");
     else {
       const b = this.view(), rows = b.rows, base = rowH();
-      const cols = this.wrapCols(mode);
+      const cols = this.textCols(mode);
       const sizes = p.long === "wrap"
         ? rows.map((r) => (r.kind === "gap" ? base : mode === "side" ? Math.max(chunks(r.L?.text ?? "", cols).length, chunks(r.R?.text ?? "", cols).length) * base : chunks(r.text, cols).length * base))
         : base;
@@ -467,16 +528,31 @@ class DiffView {
         (range) => rows.slice(range.start, range.end).map((r, j) => {
           const hgt = Array.isArray(sizes) ? sizes[range.start + j] : sizes;
           return mode === "side" ? this.sideRow(t, r, hgt, cols, sideW) : this.inlineRow(t, r, hgt, cols, hscrollW);
-        })).track_scroll(this.scroll).size_full();
+        })).track_scroll(this.scroll).size_full()
+        // A vertical list takes its width from one measured row; make that the longest one.
+        .with_item_to_measure_index(Math.max(0, rows.findIndex((r) => this.rowLen(r) === b.longest)));
       const scroller = p.long === "hscroll"
-        ? div().id("diff-x").size_full().overflow_x_scrollbar().child(div().min_w(mode === "side" ? 2 * sideW + 4 : hscrollW).h_full().child(list))
+        ? div().id("diff-x").size_full().overflow_x_scrollbar().child(div().w(mode === "side" ? 2 * sideW + 4 : hscrollW).h_full().child(list))
         : list;
-      body = div().flex_1().min_h(0).relative()
-        .child(scroller)
-        .child(Scrollbar.vertical("diff-rows").viewport_from_layout().absolute().inset_0());
+      body = v_flex().flex_1().min_h(0)
+        .child(div().flex_1().min_h(0).relative()
+          .on_mouse_move((e, cx) => {
+            if (e.bounds && Math.abs(e.bounds.width - (this.bodyW ?? 0)) > 1) { this.bodyW = e.bounds.width; cx.notify(); }
+          })
+          .on_scroll_wheel((e, cx) => this.onWheel(e, cx))
+          .child(scroller)
+          .child(Scrollbar.vertical("diff-rows").viewport_from_layout().absolute().inset_0()))
+        .when(p.long === "pan" && this.maxPan() > 0, (e) => e.child(this.panBar(t, mode)));
     }
     return v_flex().id("diff").track_focus(this.handle).size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(12)
       .on_mouse_down("left", (_e, cx) => this.handle.focus())
+      .on_mouse_move((e, cx) => {
+        if (!this.drag) return;
+        const total = this.textCols(mode) + this.maxPan();
+        this.setPan(((e.position.x - this.drag.x) / this.drag.width) * total - this.textCols(mode) / 2);
+        cx.notify();
+      })
+      .on_mouse_up("left", (_e, cx) => { this.drag = null; })
       .on_key_down((e, cx) => this.onKey(e, cx))
       .child(this.header(t, mode))
       .child(v_flex().flex_1().min_h(0).font_family(settings().font_family ?? "monospace").text_size(fontSize()).child(body))
