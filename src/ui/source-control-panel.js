@@ -102,8 +102,19 @@ export class SourceControlPanel {
     if (state.kind === "ready" && state.repository.snapshot) {
       const s = state.repository.snapshot;
       bar.child(div().flex_none().text_color(t.muted).child("⎇"));
-      bar.child(div().min_w(0).truncate().font_weight(600).child(s.branch ?? "(detached HEAD)"));
+      if (s.detached) {
+        bar.child(div().flex_none().font_weight(600).text_color(t.ansi3).child("detached HEAD"));
+        if (s.headOid) bar.child(div().flex_none().text_size(11).text_color(t.dim).child(s.headOid.slice(0, 7)));
+      } else {
+        bar.child(div().flex_shrink(1).min_w(0).truncate().font_weight(600).child(s.branch ?? ""));
+      }
+      if (s.upstream !== null) {
+        bar.child(div().flex_none().text_color(t.dim).child("→"));
+        bar.child(div().flex_shrink(1).min_w(0).truncate().text_color(t.muted).child(s.upstream));
+      }
+      if (s.ahead !== null && s.behind !== null) bar.child(aheadBehindPill(t, s.ahead, s.behind));
       if (s.unborn) bar.child(div().flex_none().text_size(11).text_color(t.dim).child("no commits yet"));
+      if (s.operation !== "none") bar.child(operationBadge(t, s.operation));
     } else {
       bar.child(div().min_w(0).truncate().text_color(t.muted).child("Source Control"));
     }
@@ -210,10 +221,38 @@ function changeLists(t, groups, actions) {
   return v_flex().flex_1().min_h(0)
     .child(listHeader(t, "Unstaged", unstaged.length,
       button(t, "stage-all", "Stage all", () => actions.stage(unstaged), actions.busy || !unstaged.length)))
+    .when(groups.conflicts.length > 0, (e) => e.child(conflictBanner(t, groups.conflicts.length)))
     .child(scrollArea("unstaged", unstaged.length ? unstaged.map(row) : [emptyNote(t, "No changes")]))
     .child(listHeader(t, "Staged", groups.staged.length,
       button(t, "unstage-all", "Unstage all", () => actions.unstage(groups.staged), actions.busy || !groups.staged.length)))
     .child(scrollArea("staged", groups.staged.length ? groups.staged.map(row) : [emptyNote(t, "Nothing staged")]));
+}
+
+/**
+ * The red banner above the Unstaged list while Conflicts remain. The Workbench never edits
+ * conflict content: the user fixes it in an editor, then ticks the row (which stages it).
+ * @param {Record<string, string>} t @param {number} count
+ */
+function conflictBanner(t, count) {
+  return div().id("conflict-banner").flex_none().px(10).py(6).text_size(11)
+    .bg(t.ansi1 + "22").text_color(t.ansi1).border_b_1().border_color(t.border)
+    .child(`${count} conflict(s): fix them in your editor, then tick to mark resolved`);
+}
+
+/** `↑ahead ↓behind` against the upstream. @param {Record<string, string>} t @param {number} ahead @param {number} behind */
+function aheadBehindPill(t, ahead, behind) {
+  return div().id("ahead-behind").flex_none().px(6).h(18).flex().items_center().rounded(9).text_size(11)
+    .bg(t.raised).text_color(ahead || behind ? t.foreground : t.dim)
+    .child(`↑${ahead} ↓${behind}`);
+}
+
+const OPERATION_LABELS = { merge: "Merging", rebase: "Rebasing", "cherry-pick": "Cherry-picking", revert: "Reverting" };
+
+/** The Operation in progress, e.g. "Merging". @param {Record<string, string>} t @param {string} operation */
+function operationBadge(t, operation) {
+  return div().id("operation").flex_none().px(6).h(18).flex().items_center().rounded(4).text_size(11)
+    .font_semibold().bg(t.ansi3 + "33").text_color(t.ansi3)
+    .child(OPERATION_LABELS[operation] ?? operation);
 }
 
 /** @param {Record<string, string>} t @param {string} label @param {number} count @param {any} action */
