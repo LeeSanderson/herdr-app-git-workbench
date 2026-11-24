@@ -3,7 +3,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, home, theme, run, checking, nextCommand } from "herdr";
+import { spaces, home, theme, run, checking, nextCommand, openOverlay } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
@@ -49,6 +49,14 @@ export class SourceControlPanel {
     /** The lastError whose detail toggle is shown, and whether its detail is open. */
     this.shownError = null;
     this.showDetail = false;
+    /** The row the pointer is over (its id), which shows its 🗑. @type {string | null} */
+    this.hoveredRow = null;
+    /**
+     * The Change the confirm dialog asks about, and the snapshot it was taken from.
+     * Valid only for the next "discard", and only while that snapshot is current.
+     * @type {{ repositoryId: string, snapshot: any, change: import("../core/status.js").Change } | null}
+     */
+    this.pendingDiscard = null;
     this.handle = cx.focus_handle();
     cx.spawn(async (cx) => {
       for (;;) {
@@ -61,10 +69,46 @@ export class SourceControlPanel {
         for (;;) {
           const command = await nextCommand();
           if (command === "focus") this.handle.focus();
+          else if (command === "discard") this.confirmDiscard();
           cx.notify();
         }
       });
     }
+  }
+
+  /**
+   * Asks before discarding `change`: remembers it, then opens the shipped confirm
+   * dialog, whose Confirm runs our "discard" command. Cancel is invisible to us.
+   * @param {any} repository @param {import("../core/status.js").Change} change
+   */
+  askDiscard(repository, change) {
+    this.pendingDiscard = { repositoryId: repository.id, snapshot: repository.snapshot, change };
+    openOverlay({
+      mod: "confirm", kind: "dialog", modal: true, width: 420, height: 170,
+      props: {
+        title: "Discard changes?",
+        detail: `${printable(change.path)} will be restored. This cannot be undone.`,
+        command: { name: "herdr-app-git-workbench.discard" },
+      },
+    });
+  }
+
+  /**
+   * The "discard" command: discards the pending Change if it is still valid, that is,
+   * the same Repository has not refreshed since the dialog opened and the Change is
+   * still listed. The pending Change is used up either way.
+   */
+  confirmDiscard() {
+    const pending = this.pendingDiscard;
+    this.pendingDiscard = null;
+    if (!pending) return;
+    const state = this.workbench.state;
+    if (state.kind !== "ready" || state.repository.id !== pending.repositoryId) return;
+    const s = state.repository.snapshot;
+    if (s !== pending.snapshot) return;
+    const { group, path } = pending.change;
+    const listed = s.groups[group]?.some((c) => c.path === path);
+    if (listed && (group === "changes" || group === "untracked")) void state.repository.discard([path]);
   }
 
   /** Follows the active space when it changes. Render re-runs when spaces change. */
@@ -141,6 +185,12 @@ export class SourceControlPanel {
           // Nothing is staged except what the user ticks. Results land in snapshot.lastError.
           stage: (changes) => void repository.stage(changes.map((c) => c.path)),
           unstage: (changes) => void repository.unstage(changes.flatMap(pathsOf)),
+          discard: (change) => this.askDiscard(repository, change),
+          hoveredRow: this.hoveredRow,
+          hover: (rowId, hovered) => {
+            if (hovered) this.hoveredRow = rowId;
+            else if (this.hoveredRow === rowId) this.hoveredRow = null;
+          },
         };
         return v_flex().flex_1().min_h(0)
           .when(s.running !== null, (e) => e.child(runningStrip(t, s.running.label)))
@@ -187,6 +237,9 @@ export class SourceControlPanel {
  *   busy: boolean,
  *   stage(changes: import("../core/status.js").Change[]): void,
  *   unstage(changes: import("../core/status.js").Change[]): void,
+ *   discard(change: import("../core/status.js").Change): void,
+ *   hoveredRow: string | null,
+ *   hover(rowId: string, hovered: boolean): void,
  * }} Actions
  */
 
@@ -268,8 +321,15 @@ function emptyNote(t, text) {
  */
 function changeRow(t, change, actions) {
   const path = printable(change.path);
-  const row = h_flex().id(`row-${change.group}:${change.path}`).flex_none().h(24).px(10).gap(8).items_center()
+  const rowId = `row-${change.group}:${change.path}`;
+  // Discard is offered only for unstaged edits and untracked files, never staged rows or Conflicts.
+  const discardable = change.group === "changes" || change.group === "untracked";
+  const row = h_flex().id(rowId).flex_none().h(24).px(10).gap(8).items_center()
     .hover((s) => s.bg(t.hover))
+    .when(discardable, (e) => e.on_hover((hovered, cx) => {
+      actions.hover(rowId, hovered);
+      cx.notify();
+    }))
     .child(checkbox(t, change, actions))
     .child(div().flex_none().w(12).text_size(11).font_semibold().text_color(statusColor(t, change)).child(statusLetter(change)))
     .child(h_flex().flex_1().min_w(0)
@@ -277,6 +337,16 @@ function changeRow(t, change, actions) {
       .child(div().flex_none().font_semibold().child(nameOf(path))));
   if (change.oldPath !== undefined) {
     row.child(div().flex_shrink(1).min_w(0).max_w(160).truncate().text_size(11).text_color(t.dim).child(`← ${printable(change.oldPath)}`));
+  }
+  if (discardable && !actions.busy && actions.hoveredRow === rowId) {
+    row.child(div().id(`discard-${change.group}:${change.path}`).flex_none().w(18).h(18).rounded(3)
+      .flex().items_center().justify_center().text_size(11).cursor_pointer()
+      .hover((s) => s.bg(t.raised))
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        actions.discard(change);
+      })
+      .child("🗑"));
   }
   return row;
 }
