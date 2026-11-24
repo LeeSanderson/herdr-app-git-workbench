@@ -42,6 +42,7 @@ test("a file at the 5,000-line limit loads whole", async () => {
   write(root, "big.txt", file(5000, { 2500: "edited" }));
   const doc = await load(root, "big.txt");
   assert.equal(doc.truncated, false);
+  assert.equal(doc.notice, null);
   assert.equal(doc.rows("split").length, 5000);
   assert.ok(doc.rows("split").every((r) => r.kind !== "gap"));
 });
@@ -52,6 +53,7 @@ test("over the limit only the changed sections load, with gap rows carrying the 
   const doc = await load(root, "big.txt");
   assert.equal(doc.truncated, true);
   assert.equal(doc.lines, 6000);
+  assert.equal(doc.notice, "Only the changed sections are shown: this file has 6,000 lines, over the 5,000-line limit");
   assert.deepEqual(outline(doc.rows("split")), [
     "gap 96 section 1",
     "ctx×3", "mod 100|100", "ctx×3",

@@ -97,13 +97,14 @@ export async function loadDiff(git, target) {
     const detail = r.stderr.trim();
     throw new DiffLoadError(detail.split("\n")[0] || "git diff failed", detail);
   }
-  return createDiffDocument(parsePatch(r.stdout, truncated ? oldLines : undefined), { truncated, lines });
+  return createDiffDocument(target, parsePatch(r.stdout, truncated ? oldLines : undefined), { truncated, lines });
 }
 
 /**
- * Parses a single-file unified patch into its header lines and body lines.
- * Unchanged lines between hunks become GapLines. Pass the old side's line count
- * to also get the gap after the last hunk.
+ * Parses a single-file unified patch into its file header lines, its hunks
+ * (raw hunk header plus raw lines, exactly as git printed them, for toPatch())
+ * and its body lines. Unchanged lines left out between hunks become GapLines;
+ * pass the old side's line count to also get the gap after the last hunk.
  * @param {string} text @param {number} [oldLines]
  */
 export function parsePatch(text, oldLines) {
@@ -111,67 +112,137 @@ export function parsePatch(text, oldLines) {
   const all = raw === "" ? [] : raw.split("\n");
   /** @type {string[]} */
   const header = [];
+  /** @type {{ header: string, lines: string[] }[]} */
+  const hunks = [];
   /** @type {(PatchLine | GapLine)[]} */
   const body = [];
   let i = 0;
   for (; i < all.length && !all[i].startsWith("@@"); i++) header.push(all[i]);
+  // A combined diff (a Conflict) has one prefix column per parent and `@@@`
+  // hunk headers. Its body is read as a diff from the first parent (HEAD's
+  // side, "ours") to the result: column 1 decides, and lines that only another
+  // parent had are left out of the body (they stay in the raw hunk).
+  let parents = 1;
   // The next old/new line numbers; lines before a hunk's start were left out.
   let a = 1;
   let b = 1;
-  let hunks = 0;
   for (; i < all.length; i++) {
     const l = all[i];
-    const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/.exec(l);
+    const m = /^(@@+) -(\d+)(?:,(\d+))?(?: -\d+(?:,\d+)?)* \+(\d+)(?:,(\d+))? \1 ?(.*)$/.exec(l);
     if (m) {
-      hunks++;
+      parents = m[1].length - 1;
       // An empty range "-5,0" names the line before it.
       const start = (/** @type {string} */ n, /** @type {string | undefined} */ len) => (len === "0" ? +n + 1 : +n);
-      const oldStart = start(m[1], m[2]);
-      if (oldStart > a) body.push({ kind: "gap", a, b, count: oldStart - a, title: m[5].trim() });
+      const oldStart = start(m[2], m[3]);
+      if (oldStart > a) body.push({ kind: "gap", a, b, count: oldStart - a, title: m[6].trim() });
       a = oldStart;
-      b = start(m[3], m[4]);
+      b = start(m[4], m[5]);
+      hunks.push({ header: l, lines: [] });
       continue;
     }
-    const text = l.slice(1);
-    switch (l[0]) {
-      case " ": body.push({ kind: "ctx", a: a++, b: b++, text }); break;
-      case "-": body.push({ kind: "del", a: a++, text }); break;
-      case "+": body.push({ kind: "add", b: b++, text }); break;
-      case "\\": {
-        const prev = body[body.length - 1];
-        if (prev && prev.kind !== "gap") prev.noeol = true;
-        break;
-      }
+    hunks[hunks.length - 1]?.lines.push(l);
+    if (l[0] === "\\") {
+      const prev = body[body.length - 1];
+      if (prev && prev.kind !== "gap") prev.noeol = true;
+      continue;
     }
+    const prefix = l.slice(0, parents);
+    const text = l.slice(parents);
+    const inResult = !prefix.includes("-");
+    if (!inResult) {
+      if (prefix[0] === "-") body.push({ kind: "del", a: a++, text });
+    } else if (prefix[0] === "+") body.push({ kind: "add", b: b++, text });
+    else if (prefix[0] === " ") body.push({ kind: "ctx", a: a++, b: b++, text });
   }
-  if (hunks && oldLines !== undefined && oldLines >= a) body.push({ kind: "gap", a, b, count: oldLines - a + 1, title: "" });
-  return { header, body };
+  if (hunks.length && oldLines !== undefined && oldLines >= a) body.push({ kind: "gap", a, b, count: oldLines - a + 1, title: "" });
+  return { header, hunks, body, combined: parents > 1 };
 }
 
 /**
- * @param {{ header: string[], body: (PatchLine | GapLine)[] }} patch
+ * What a patch's file header lines say about the file.
+ * @param {string[]} header
+ */
+function headerInfo(header) {
+  let binary = false;
+  let added = false;
+  let deleted = false;
+  /** @type {string | null} */ let oldMode = null;
+  /** @type {string | null} */ let newMode = null;
+  /** @type {string | null} */ let renameFrom = null;
+  /** @type {number | null} */ let similarity = null;
+  for (const h of header) {
+    let m;
+    if (/^Binary files .* differ$/.test(h)) binary = true;
+    else if ((m = /^new file mode (\d+)/.exec(h))) { added = true; newMode = m[1]; }
+    else if ((m = /^deleted file mode (\d+)/.exec(h))) { deleted = true; oldMode = m[1]; }
+    else if ((m = /^old mode (\d+)/.exec(h))) oldMode = m[1];
+    else if ((m = /^new mode (\d+)/.exec(h))) newMode = m[1];
+    else if ((m = /^rename from (.*)/.exec(h))) renameFrom = m[1];
+    else if ((m = /^similarity index (\d+)%/.exec(h))) similarity = +m[1];
+  }
+  return { binary, added, deleted, oldMode, newMode, renameFrom, similarity };
+}
+
+/**
+ * The text of the Diff view's thin notice band, or null when there is nothing to say.
+ * @param {DiffTarget} target @param {ReturnType<typeof headerInfo>} info
+ * @param {{ truncated: boolean, lines: number }} size
+ */
+function noticeFor(target, info, size) {
+  const parts = [];
+  if (info.binary) parts.push("Binary file changed");
+  if (target.group === "untracked") parts.push("Untracked file: not yet tracked by Git");
+  else if (info.added) parts.push("New file");
+  else if (info.deleted) parts.push("Deleted file");
+  else if (info.oldMode && info.newMode && info.oldMode !== info.newMode) parts.push(`Mode changed ${info.oldMode} → ${info.newMode}`);
+  if (size.truncated) parts.push(`Only the changed sections are shown: this file has ${thousands(size.lines)} lines, over the ${thousands(LINE_LIMIT)}-line limit`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/** 12345 → "12,345" (no Intl in every runtime). @param {number} n */
+const thousands = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+/**
+ * @param {DiffTarget} target @param {ReturnType<typeof parsePatch>} patch
  * @param {{ truncated: boolean, lines: number }} size `lines` is the larger side's line count
  */
-function createDiffDocument(patch, { truncated, lines }) {
+function createDiffDocument(target, patch, size) {
   let adds = 0;
   let dels = 0;
   for (const l of patch.body) {
     if (l.kind === "add") adds++;
     else if (l.kind === "del") dels++;
   }
+  const info = headerInfo(patch.header);
+  const notice = noticeFor(target, info, size);
   /** @type {Map<string, ReturnType<typeof buildRows>>} */
   const cache = new Map();
   return Object.freeze({
     adds,
     dels,
     /** True when only the changed sections loaded (the file is over LINE_LIMIT lines). */
-    truncated,
-    lines,
+    truncated: size.truncated,
+    /** The larger side's line count (0 for binary files). */
+    lines: size.lines,
+    ...info,
+    /** True for a Conflict's combined diff; its toPatch() is not appliable. */
+    combined: patch.combined,
+    notice,
     /** @param {import("./rows.js").RowMode} mode */
     rows(mode) {
       let rows = cache.get(mode);
       if (!rows) cache.set(mode, (rows = buildRows(patch.body, mode)));
       return rows;
+    },
+    /**
+     * The patch exactly as git printed it: file header lines, raw hunk headers,
+     * lines with their endings and `\ No newline at end of file`. A forward patch
+     * from the left side to the right side (Phase 2 hunk staging applies it).
+     */
+    toPatch() {
+      const out = [...patch.header];
+      for (const h of patch.hunks) out.push(h.header, ...h.lines);
+      return out.length ? out.join("\n") + "\n" : "";
     },
   });
 }
