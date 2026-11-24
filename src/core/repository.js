@@ -172,6 +172,22 @@ export function createRepository({ git, key, queue = createQueue() }) {
         runOnPaths(snapshot?.unborn ? ["reset", "-q"] : ["restore", "--staged"], paths, timeoutClass));
     },
 
+    /**
+     * Commits what is staged with `message` as one `-m` argument, so Git sees it
+     * exactly as typed. Hooks run as on the command line; a failure's `detail` is
+     * Git's full output, hook output included. Runs with the long timeout.
+     * `amend: true` adds `--amend` (Phase 2; the Phase 1 UI never passes it).
+     * @param {{ message: string, amend?: boolean }} options @returns {Promise<ActionResult>}
+     */
+    commit({ message, amend = false }) {
+      return act("Committing…", "long", async (timeoutClass) => {
+        const args = ["commit", ...(amend ? ["--amend"] : []), "-m", message];
+        const r = await git.run(key.machine, args, { cwd: key.toplevel, timeoutClass });
+        // Hooks write to stderr; Git's own refusals ("nothing to commit") go to stdout.
+        return r.ok ? null : errorFrom([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
+      });
+    },
+
     /** True once the Workbench has let go of this Repository and its queue has drained. */
     get disposed() {
       return disposed;

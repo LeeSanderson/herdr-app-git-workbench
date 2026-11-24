@@ -2,9 +2,10 @@
 // The Source Control panel: follows the active space and shows the Workbench state.
 
 import { div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { spaces, home, theme, run, checking, nextCommand } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
+import { commitReadiness } from "../core/commit.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -50,6 +51,15 @@ export class SourceControlPanel {
     this.shownError = null;
     this.showDetail = false;
     this.handle = cx.focus_handle();
+    /** The commit message box. Typing re-renders so the status line follows the message. */
+    this.message = TextareaState.new({ placeholder: "Message (Ctrl+Enter to commit)", rows: 3 });
+    this.message.on("change", (_e, cx) => cx.notify());
+    // Ctrl/Cmd+Enter: the textarea reports it as a secondary submit (plain Enter is a newline).
+    this.message.on("submit", (e, _cx) => {
+      if (e.secondary) this.commit();
+    });
+    /** True from a commit's start until it resolves, so one press can't commit twice. */
+    this.committing = false;
     cx.spawn(async (cx) => {
       for (;;) {
         await nextChange(workbench);
@@ -79,6 +89,32 @@ export class SourceControlPanel {
     this.workbench.follow(where).catch((err) => {
       this.error = String(err?.message ?? err);
     });
+  }
+
+  /**
+   * Commits the staged files with the box's message, exactly as the button does.
+   * Does nothing while blocked (see commitReadiness) or while a command runs.
+   * Clears the box on success; a failure lands in snapshot.lastError.
+   */
+  async commit() {
+    const state = this.workbench.state;
+    if (this.committing || state.kind !== "ready") return;
+    const { repository } = state;
+    const s = repository.snapshot;
+    const message = this.message.value();
+    if (!s || s.running !== null || !commitReadiness(s.groups, message).ready) return;
+    this.committing = true;
+    try {
+      const result = await repository.commit({ message });
+      if (result.ok) this.message.set_value("");
+    } finally {
+      this.committing = false;
+    }
+  }
+
+  /** @param {import("gpui-kit").Context} _cx */
+  close(_cx) {
+    this.message.release();
   }
 
   /** @param {import("gpui-kit").Context} _cx */
@@ -145,11 +181,42 @@ export class SourceControlPanel {
         return v_flex().flex_1().min_h(0)
           .when(s.running !== null, (e) => e.child(runningStrip(t, s.running.label)))
           .when(s.lastError !== null, (e) => e.child(this.errorStrip(t, s.lastError)))
-          .child(changeLists(t, s.groups, actions));
+          .child(changeLists(t, s.groups, actions))
+          .child(this.commitBox(t, s));
       }
       default:
         return div();
     }
+  }
+
+  /**
+   * The commit box at the bottom: the message, a status line ("N file(s) ready" or
+   * why commit is blocked) and the Commit to <branch> button.
+   * @param {Record<string, string>} t @param {import("../core/repository.js").Snapshot} s
+   */
+  commitBox(t, s) {
+    const { ready, status } = commitReadiness(s.groups, this.message.value());
+    const enabled = ready && s.running === null;
+    return v_flex().id("commit-box").flex_none().p(10).gap(6).border_t_1().border_color(t.border).bg(t.chrome)
+      // Fallback for Ctrl+Enter in case the textarea doesn't report it as a secondary submit.
+      .on_key_down((e, cx) => {
+        if (e.keystroke === "ctrl-enter" || e.keystroke === "cmd-enter") {
+          cx.stop_propagation();
+          this.commit();
+        }
+      })
+      .child(Textarea.new(this.message))
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(ready ? t.muted : t.dim).child(status))
+        .child(h_flex().id("commit").flex_none().h(24).px(10).items_center().justify_center().rounded(4)
+          .text_size(12).font_semibold()
+          .bg(enabled ? t.accent : t.raised).text_color(enabled ? t.accent_foreground : t.dim)
+          .when(enabled, (e) => e.cursor_pointer().hover((st) => st.opacity(0.85))
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              this.commit();
+            }))
+          .child(`Commit to ${s.branch ?? "detached HEAD"}`)));
   }
 
   /**
