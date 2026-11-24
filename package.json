@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "sync": "node scripts/dev-sync.mjs",
-    "dev": "node scripts/dev-sync.mjs --watch"
+    "dev": "node scripts/dev-sync.mjs --watch",
+    "test": "node --test \"test/*.test.js\""
   }
 }

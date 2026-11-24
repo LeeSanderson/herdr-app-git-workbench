@@ -18,7 +18,7 @@ const APP_HOME = process.env.HERDR_APP_HOME ?? path.join(os.homedir(), ".config"
 const TARGET = path.join(APP_HOME, "mods", MOD_NAME);
 
 const INCLUDE_EXT = new Set([".js", ".mjs", ".json", ".svg", ".png"]);
-const EXCLUDE_DIRS = new Set([".git", ".claude", ".agents", "node_modules", "docs", "scripts", "test", "tests"]);
+const EXCLUDE_DIRS = new Set([".git", ".claude", ".agents", "node_modules", "docs", "scripts", "test", "tests", "adapters"]);
 const EXCLUDE_FILES = new Set(["jsconfig.json", "package.json", "package-lock.json", "skills-lock.json"]);
 
 /** Is this repo-relative path (forward slashes) part of the mod? */
