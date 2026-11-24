@@ -23,7 +23,8 @@ export const nodePlatform = {
     const queue = [];
     let wake = null;
     let done = false;
-    const watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
+    // Not persistent: a watch left running must not keep a test process alive.
+    const watcher = fs.watch(dir, { recursive: true, persistent: false }, (_event, filename) => {
       if (!filename) return;
       queue.push(path.join(dir, filename.toString()));
       wake?.();

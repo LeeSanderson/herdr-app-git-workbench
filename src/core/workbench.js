@@ -35,9 +35,12 @@ export function createWorkbench(platform) {
     for (const fn of [...listeners]) fn();
   }
 
-  /** Stops following `current` (watch/queue disposal arrive with later tickets). */
+  /** Stops following `current`: its watch stops and it is disposed. */
   function leave() {
-    if (current) repositories.delete(current.id);
+    if (current) {
+      repositories.delete(current.id);
+      current.dispose();
+    }
     current = null;
   }
 
@@ -70,20 +73,21 @@ export function createWorkbench(platform) {
       const mine = ++generation;
       const stale = () => mine !== generation;
       try {
-        const top = await git.run(machine, ["rev-parse", "--show-toplevel"], { cwd: folder, read: true });
+        const top = await git.run(machine, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], { cwd: folder, read: true });
         if (stale()) return;
         if (!top.ok) {
           leave();
           return setState({ kind: "no-repository", folder });
         }
-        const key = { machine: machine ?? null, toplevel: top.stdout.trim() };
+        const [toplevel, gitDir, commonDir] = top.stdout.split(/\r?\n/);
+        const key = { machine: machine ?? null, toplevel };
         if (current?.id === repositoryId(key) && state.kind === "ready") return;
 
         leave();
         setState({ kind: "loading", folder });
-        const repository = createRepository({ git, key });
+        const repository = createRepository({ git, key, platform, dirs: { root: toplevel, gitDir, commonDir } });
         await repository.refresh();
-        if (stale()) return;
+        if (stale()) return repository.dispose();
         current = repository;
         repositories.set(repository.id, repository);
         setState({ kind: "ready", repository });
