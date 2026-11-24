@@ -17,7 +17,13 @@
  * }>} ChangeGroups
  */
 /**
- * @typedef {{ branch: string | null, headOid: string | null, unborn: boolean, detached: boolean, groups: ChangeGroups }} Status
+ * `upstream` is null when the branch tracks nothing. `ahead`/`behind` are null when
+ * there is no upstream or it no longer resolves (for example, deleted on the remote).
+ * @typedef {{
+ *   branch: string | null, headOid: string | null, unborn: boolean, detached: boolean,
+ *   upstream: string | null, ahead: number | null, behind: number | null,
+ *   groups: ChangeGroups,
+ * }} Status
  */
 
 /**
@@ -26,6 +32,9 @@
  */
 export function parseStatus(stdout) {
   let branch = null, headOid = null, unborn = false, detached = false;
+  /** @type {string | null} */ let upstream = null;
+  /** @type {number | null} */ let ahead = null;
+  /** @type {number | null} */ let behind = null;
   /** @type {Change[]} */ const staged = [];
   /** @type {Change[]} */ const changes = [];
   /** @type {Change[]} */ const untracked = [];
@@ -42,6 +51,11 @@ export function parseStatus(stdout) {
       const head = entry.slice("# branch.head ".length);
       detached = head === "(detached)";
       branch = detached ? null : head;
+    } else if (entry.startsWith("# branch.upstream ")) {
+      upstream = entry.slice("# branch.upstream ".length);
+    } else if (entry.startsWith("# branch.ab ")) {
+      const m = /^\+(\d+) -(\d+)$/.exec(entry.slice("# branch.ab ".length));
+      if (m) [ahead, behind] = [Number(m[1]), Number(m[2])];
     } else if (entry.startsWith("1 ")) {
       const [xy, path] = fields(entry, 8);
       if (xy[0] !== ".") staged.push(change(path, xy[0], "staged"));
@@ -59,7 +73,7 @@ export function parseStatus(stdout) {
       untracked.push(change(entry.slice(2), "A", "untracked"));
     }
   }
-  return { branch, headOid, unborn, detached, groups: Object.freeze({ staged, changes, untracked, conflicts }) };
+  return { branch, headOid, unborn, detached, upstream, ahead, behind, groups: Object.freeze({ staged, changes, untracked, conflicts }) };
 }
 
 /**
