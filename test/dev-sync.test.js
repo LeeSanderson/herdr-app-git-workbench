@@ -8,9 +8,9 @@ test("dev-sync copies the mod's runtime files", () => {
   }
 });
 
-test("dev-sync leaves tests, docs, scripts and the Node adapter out of the mods folder", () => {
+test("dev-sync leaves tests, docs, scripts, the Node adapter and the preview out of the mods folder", () => {
   for (const rel of ["test/workbench.test.js", "test/helpers/repo.js", "docs/agents/domain.md", "scripts/dev-sync.mjs",
-    "src/adapters/node-platform.js", "package.json", "jsconfig.json"]) {
+    "src/adapters/node-platform.js", "package.json", "jsconfig.json", "preview.png", "README.md", "RECIPE.md"]) {
     assert.equal(isModFile(rel), false, rel);
   }
 });
