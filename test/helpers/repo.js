@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { closeAllWatches } from "../../src/adapters/node-platform.js";
 
 const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "gitwb-config-"));
 const emptyConfig = path.join(configDir, "gitconfig");
@@ -26,8 +27,12 @@ export function tempDir(prefix = "gitwb-") {
 const created = [];
 
 /** Removes every temp folder made so far. Call it from `after`. */
-export function cleanup() {
-  for (const dir of created.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+export async function cleanup() {
+  // Windows can't delete a folder that is being watched, and a watch's handle
+  // is only released after the event loop turns.
+  closeAllWatches();
+  await new Promise((r) => setTimeout(r, 50));
+  for (const dir of created.splice(0)) await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /** Runs git synchronously in `cwd`; returns stdout. Throws on a non-zero exit. */

@@ -2,8 +2,8 @@
 // The Source Control panel: follows the active space and shows the Workbench state.
 
 import { div } from "gpui-kit";
+import { spaces, home, theme, run, checking, nextCommand, openOverlay, window } from "herdr";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
-import { spaces, home, theme, run, checking, nextCommand, openOverlay } from "herdr";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
 import { diffTargetFor } from "../core/diff-target.js";
 import { commitReadiness } from "../core/commit.js";
@@ -62,6 +62,8 @@ export class SourceControlPanel {
      */
     this.pendingDiscard = null;
     this.handle = cx.focus_handle();
+    /** What the last render saw of focus: the active space, window and panel focus. */
+    this.seenFocus = { space: /** @type {string | null} */ (null), window: false, panel: false };
     /** The commit message box. Typing re-renders so the status line follows the message. */
     this.message = TextareaState.new({ placeholder: "Message (Ctrl+Enter to commit)", rows: 3 });
     this.message.on("change", (_e, cx) => cx.notify());
@@ -87,8 +89,10 @@ export class SourceControlPanel {
       cx.spawn(async (cx) => {
         for (;;) {
           const command = await nextCommand();
-          if (command === "focus") this.handle.focus();
-          else if (command === "discard") this.confirmDiscard();
+          if (command === "focus") {
+            this.handle.focus();
+            this.refreshForFocus();
+          } else if (command === "discard") this.confirmDiscard();
           else this.modCommand(command);
           cx.notify();
         }
@@ -145,6 +149,43 @@ export class SourceControlPanel {
     });
   }
 
+  /** Forces a refresh of the followed Repository (merges with one already running). */
+  refresh() {
+    const state = this.workbench.state;
+    if (state.kind === "ready") state.repository.refresh().catch(() => {});
+  }
+
+  /**
+   * Refreshes when the panel, the window or a space gets focus. Render re-runs
+   * when Herdr's focus and spaces change, so this compares with the last render.
+   * A space switch to another Repository is covered by `follow` instead.
+   */
+  refreshOnFocus() {
+    if (checking()) return;
+    const now = {
+      space: spaces().find((s) => s.active)?.id ?? null,
+      window: window()?.active ?? false,
+      panel: this.handle.is_focused(),
+    };
+    const was = this.seenFocus;
+    this.seenFocus = now;
+    if (now.space !== was.space || (now.window && !was.window) || (now.panel && !was.panel)) this.refreshForFocus();
+  }
+
+  /**
+   * A focus-triggered refresh. Skipped while a discard confirmation is still valid:
+   * the confirm dialog closing gives the panel focus, possibly just before
+   * "discard" arrives, and a refresh landing first would void the Confirm.
+   * Once anything else refreshes, the pending Change is stale and this runs again.
+   */
+  refreshForFocus() {
+    const pending = this.pendingDiscard;
+    const state = this.workbench.state;
+    if (pending && state.kind === "ready" && state.repository.id === pending.repositoryId
+      && state.repository.snapshot === pending.snapshot) return;
+    this.refresh();
+  }
+
   /**
    * Commits the staged files with the box's message, exactly as the button does.
    * Does nothing while blocked (see commitReadiness) or while a command runs.
@@ -184,11 +225,6 @@ export class SourceControlPanel {
     const state = this.workbench.state;
     if (state.kind !== "ready" || !state.repository.snapshot) return null;
     return { repository: state.repository, s: state.repository.snapshot };
-  }
-
-  /** Re-reads the current Repository. */
-  refresh() {
-    void this.current()?.repository.refresh();
   }
 
   /** Stages every unstaged row (Conflicts are marked resolved), like the Stage all button. */
@@ -249,7 +285,11 @@ export class SourceControlPanel {
 
   /** @param {import("gpui-kit").Context} _cx */
   render(_cx) {
+    // Order matters: a space switch that changes Repository is followed first, and
+    // refreshOnFocus then only refreshes the (already current) Repository again,
+    // which merges into the follow's own refresh or is a cheap re-read.
     this.follow();
+    this.refreshOnFocus();
     const t = theme();
     const state = this.workbench.state;
     return v_flex()
@@ -287,6 +327,15 @@ export class SourceControlPanel {
     }
     return bar
       .child(div().flex_1())
+      .child(
+        div().id("refresh").flex_none().w(22).h(22).flex().items_center().justify_center().rounded(4)
+          .text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            this.refresh();
+          })
+          .child("⟳"),
+      )
       .child(
         div().id("close").flex_none().w(22).h(22).flex().items_center().justify_center().rounded(4)
           .text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))

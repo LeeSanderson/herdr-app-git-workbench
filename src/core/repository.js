@@ -4,6 +4,10 @@
 
 import { parseStatus } from "./status.js";
 import { createQueue } from "./queue.js";
+import { isRelevant, watchRoots } from "./watch-filter.js";
+
+/** Quiet time after the last relevant file event before refreshing. */
+export const DEBOUNCE_MS = 400;
 
 /** @typedef {ReturnType<import("./git.js").createGit>} Git */
 /** @typedef {import("./git.js").TimeoutClass} TimeoutClass */
@@ -98,12 +102,14 @@ function errorFrom(stderr, fallback) {
 /** @typedef {import("./platform.js").Platform["readTextFile"]} ReadTextFile */
 
 /**
- * @param {{ git: Git, key: RepositoryKey, queue?: import("./queue.js").Queue, gitDir?: string, readTextFile?: ReadTextFile }} deps
+ * @param {{ git: Git, key: RepositoryKey, queue?: import("./queue.js").Queue, gitDir?: string, readTextFile?: ReadTextFile, platform?: import("./platform.js").Platform, dirs?: import("./watch-filter.js").RepositoryDirs }} deps
  *   `queue` is shared by every Repository with the same common git dir. `gitDir` is the
  *   absolute real git dir (per worktree), where `readTextFile` looks for the Operation in
- *   progress; without both, `operation` is always "none".
+ *   progress; without both, `operation` is always "none". With `platform` and `dirs`,
+ *   the Repository watches its working tree and git dirs until `dispose()`, refreshing
+ *   (debounced) on relevant events.
  */
-export function createRepository({ git, key, queue = createQueue(), gitDir, readTextFile }) {
+export function createRepository({ git, key, queue = createQueue(), gitDir, readTextFile, platform, dirs }) {
   key = Object.freeze({ machine: key.machine ?? null, toplevel: key.toplevel });
   /** @type {(ReturnType<typeof parseStatus> & { operation: Operation }) | null} */
   let status = null;
@@ -122,6 +128,76 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
     for (const fn of [...listeners]) fn();
   }
   const offQueue = queue.subscribe(publish);
+
+  /** Re-reads the repository from Git. @returns {Promise<ActionResult>} */
+  async function readStatus() {
+    const [r, operation] = await Promise.all([
+      git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], { cwd: key.toplevel, read: true }),
+      gitDir && readTextFile ? readOperation(readTextFile, key.machine, gitDir) : /** @type {Operation} */ ("none"),
+    ]);
+    if (!r.ok) return { ok: false, error: errorFrom(r.stderr, "git status failed") };
+    if (disposed) return { ok: true };
+    status = { ...parseStatus(r.stdout), operation };
+    publish();
+    return { ok: true };
+  }
+
+  // A refresh requested while one runs merges into a single follow-up.
+  /** @type {Promise<ActionResult> | null} */
+  let running = null;
+  /** @type {Promise<ActionResult> | null} */
+  let followUp = null;
+  /** @returns {Promise<ActionResult>} */
+  function refresh() {
+    if (!running) {
+      running = readStatus().finally(() => {
+        running = null;
+      });
+      return running;
+    }
+    if (!followUp) {
+      const next = () => {
+        followUp = null;
+        return refresh();
+      };
+      followUp = running.then(next, next);
+    }
+    return followUp;
+  }
+
+  // Debounce: refresh once relevant events have been quiet for DEBOUNCE_MS.
+  let eventSeq = 0;
+  let debouncing = false;
+  async function schedule() {
+    eventSeq++;
+    if (debouncing) return;
+    debouncing = true;
+    try {
+      let seen;
+      do {
+        seen = eventSeq;
+        await /** @type {import("./platform.js").Platform} */ (platform).sleep(DEBOUNCE_MS);
+      } while (seen !== eventSeq && !disposed);
+    } finally {
+      debouncing = false;
+    }
+    if (!disposed) refresh().catch(() => {});
+  }
+
+  /** @type {import("./platform.js").Watch[]} */
+  const watches = [];
+  if (platform && dirs) {
+    for (const dir of watchRoots(dirs)) {
+      const w = platform.watch(dir);
+      watches.push(w);
+      (async () => {
+        for await (const batch of w.events) {
+          if (disposed) return;
+          if (batch.some((p) => isRelevant(p, dirs))) schedule();
+        }
+      })().catch(() => {});
+    }
+  }
 
   /**
    * Runs one repository-changing command through the queue, then refreshes.
@@ -177,17 +253,8 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
       return () => listeners.delete(fn);
     },
 
-    /** Re-reads the repository from Git. @returns {Promise<ActionResult>} */
-    async refresh() {
-      const [r, operation] = await Promise.all([
-        git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], { cwd: key.toplevel, read: true }),
-        gitDir && readTextFile ? readOperation(readTextFile, key.machine, gitDir) : /** @type {Operation} */ ("none"),
-      ]);
-      if (!r.ok) return { ok: false, error: errorFrom(r.stderr, "git status failed") };
-      status = { ...parseStatus(r.stdout), operation };
-      publish();
-      return { ok: true };
-    },
+    /** Re-reads the repository from Git; a call while one runs merges into a single follow-up. */
+    refresh,
 
     /**
      * Stages `paths` (relative to the top level) with `git add`, which also adds
@@ -255,9 +322,10 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
       return disposed;
     },
 
-    /** Stops listening and notifying. The Workbench calls it once the queue drains. */
+    /** Stops watching, listening and notifying. The Workbench calls it once the queue drains. */
     dispose() {
       disposed = true;
+      for (const w of watches.splice(0)) w.cancel();
       offQueue();
       listeners.clear();
     },

@@ -43,6 +43,7 @@ export function createWorkbench(platform) {
 
   /**
    * Creates a Repository on the queue for its common git dir (shared by Linked worktrees).
+   * It watches its working tree and git dirs until it is closed.
    * @param {RepositoryKey} key @param {string} commonDir @param {string} gitDir
    */
   function openRepository(key, commonDir, gitDir) {
@@ -50,11 +51,14 @@ export function createWorkbench(platform) {
     let slot = queues.get(qid);
     if (!slot) queues.set(qid, (slot = { queue: createQueue(), users: 0 }));
     slot.users++;
-    const repository = createRepository({ git, key, queue: slot.queue, gitDir, readTextFile: platform.readTextFile });
+    const repository = createRepository({
+      git, key, queue: slot.queue, gitDir, readTextFile: platform.readTextFile,
+      platform, dirs: { root: key.toplevel, gitDir, commonDir },
+    });
     const shared = slot;
     return {
       repository,
-      /** Disposes the Repository once its queue drains, and drops the queue when nothing else uses it. */
+      /** Disposes the Repository (stopping its watch) once its queue drains, and drops the queue when nothing else uses it. */
       async close() {
         await shared.queue.drained();
         repository.dispose();
