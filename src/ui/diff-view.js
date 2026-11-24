@@ -7,7 +7,12 @@
 //
 // The mode (split | inline) is one shared setting for every Diff view. Keys are
 // handled with on_key_down on the view's focus handle (not keys.json):
-// i toggles the mode; n / f7 and p / shift-f7 jump to the next / previous change.
+// i toggles the mode; n / f7 and p / shift-f7 jump to the next / previous change;
+// r reloads.
+//
+// The document is live (core/live-diff.js): it reloads on every snapshot change of
+// its Repository, and keeps its last content under a stale band once that
+// Repository is no longer followed.
 // alt-up / alt-down are Herdr's agent.prev / agent.next, so they are not used.
 //
 // Long lines pan, never wrap: one column offset (`pan`) shared by both halves,
@@ -24,6 +29,7 @@ import { statusLetter, statusColor, printable, folderOf, nameOf } from "./theme.
 import { claimTab } from "./diff-tabs.js";
 import { displaySegments } from "../core/display.js";
 import { changeAnchors } from "../core/rows.js";
+import { createLiveDiff } from "../core/live-diff.js";
 
 /** @typedef {import("../core/diff-target.js").DiffTarget} DiffTarget */
 /** @typedef {import("../core/rows.js").SplitRow} SplitRow */
@@ -107,10 +113,8 @@ export class DiffView {
     this.workbench = workbench;
     /** @type {DiffTarget | null} */
     this.target = /** @type {any} */ (props())?.diff ?? null;
-    /** @type {import("../core/diff.js").DiffDocument | null} */
-    this.doc = null;
-    /** @type {string | null} */
-    this.error = null;
+    /** The target's document, kept current while its Repository is followed. @type {import("../core/live-diff.js").LiveDiff | null} */
+    this.live = null;
     this.scroll = VirtualListScrollHandle.new();
     this.handle = cx.focus_handle();
     /** The change block the navigator is on; -1 before the first jump. */
@@ -125,23 +129,36 @@ export class DiffView {
     this.handle.focus();
     if (this.target) {
       claimTab(this.target);
-      this.load(cx);
+      const live = (this.live = createLiveDiff(workbench, this.target));
+      // Re-render after every load and stale change, until the tab closes.
+      cx.spawn(async (cx) => {
+        while (this.live === live) {
+          await new Promise((resolve) => { const off = live.onChange(() => { off(); resolve(undefined); }); });
+          cx.notify();
+        }
+      });
     }
   }
 
-  /** @param {import("gpui-kit").Context} cx */
-  load(cx) {
-    const target = this.target;
-    if (!target) return;
-    cx.spawn(async (cx) => {
-      try {
-        this.doc = await this.workbench.loadDiff(target);
-        this.error = null;
-      } catch (err) {
-        this.error = String(err?.message ?? err);
-      }
-      cx.notify();
-    });
+  /** The last loaded document. */
+  get doc() {
+    return this.live?.doc ?? null;
+  }
+
+  /** The last load's error. */
+  get error() {
+    return this.live?.error ?? null;
+  }
+
+  /** Forces a reload (`r` and the header's ⟳). */
+  reload() {
+    void this.live?.reload();
+  }
+
+  /** The tab is closing: stop following the Repository. @param {import("gpui-kit").Context} _cx */
+  close(_cx) {
+    this.live?.dispose();
+    this.live = null;
   }
 
   /** The navigation anchors (first row of each change block) for `mode`. @param {RowMode} mode */
@@ -246,6 +263,7 @@ export class DiffView {
     else if (k === "i") this.setMode(diffMode() === "inline" ? "split" : "inline");
     else if (k === "left" || k === "right") this.setPan(this.pan + (k === "right" ? PAN_STEP : -PAN_STEP), diffMode());
     else if (k === "home") this.setPan(0, diffMode());
+    else if (k === "r") this.reload();
     else return;
     cx.stop_propagation();
     cx.notify();
@@ -269,6 +287,8 @@ export class DiffView {
     const mode = diffMode();
     return root
       .child(this.header(t, this.target, mode))
+      .when(!!this.live?.stale, (e) => e.child(this.staleBand(t)))
+      .when(!!(this.doc && this.error), (e) => e.child(this.noticeBand(t, `Reload failed: ${this.error}`)))
       .when(!!this.doc?.notice, (e) => e.child(this.noticeBand(t, /** @type {string} */ (this.doc?.notice))))
       .child(v_flex().flex_1().min_h(0).font_family(settings().font_family ?? "monospace").text_size(fontSize()).child(this.body(t, mode)));
   }
@@ -295,7 +315,26 @@ export class DiffView {
     }
     bar.child(div().flex_1());
     if (this.doc) bar.child(this.navigator(t, mode));
-    return bar.child(this.modeSwitch(t, mode));
+    return bar.child(this.modeSwitch(t, mode)).child(this.reloadButton(t));
+  }
+
+  /** ⟳: reloads now. @param {Record<string, string>} t */
+  reloadButton(t) {
+    return div().id("reload").flex_none().w(22).h(22).rounded(4).flex().items_center().justify_center()
+      .text_size(13).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.reload(); cx.notify(); })
+      .child("⟳");
+  }
+
+  /**
+   * Shown while the target's Repository is not followed (the space changed):
+   * the rows are the last loaded ones and no longer update.
+   * @param {Record<string, string>} t
+   */
+  staleBand(t) {
+    return div().flex_none().px(12).py(3).border_b_1().border_color(t.border).bg(t.ansi3 + "22")
+      .text_size(11).text_color(t.ansi3).truncate()
+      .child("Stale: this Repository is no longer followed, so this diff doesn't update. Press r to reload it once.");
   }
 
   /**
