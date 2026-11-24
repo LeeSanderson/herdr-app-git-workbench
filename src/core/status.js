@@ -1,27 +1,84 @@
 // @ts-check
 // Parses `git status --porcelain=v2 -z --branch` (NUL-delimited).
 
+/** @typedef {"staged" | "changes" | "untracked" | "conflicts"} ChangeGroup */
+/** @typedef {"M" | "A" | "D" | "R" | "T" | "U"} ChangeStatus */
 /**
- * @typedef {{ branch: string | null, headOid: string | null, unborn: boolean, detached: boolean }} StatusHeaders
+ * One path in one Change group. A path can have both a staged and an unstaged Change.
+ * Paths are relative to the Repository's top level, with forward slashes, exactly as Git prints them.
+ * @typedef {Readonly<{ path: string, oldPath?: string, status: ChangeStatus, group: ChangeGroup }>} Change
+ */
+/**
+ * @typedef {Readonly<{
+ *   staged: readonly Change[],
+ *   changes: readonly Change[],
+ *   untracked: readonly Change[],
+ *   conflicts: readonly Change[],
+ * }>} ChangeGroups
+ */
+/**
+ * @typedef {{ branch: string | null, headOid: string | null, unborn: boolean, detached: boolean, groups: ChangeGroups }} Status
  */
 
 /**
  * @param {string} stdout
- * @returns {StatusHeaders}
+ * @returns {Status}
  */
 export function parseStatus(stdout) {
-  /** @type {StatusHeaders} */
-  const out = { branch: null, headOid: null, unborn: false, detached: false };
-  for (const entry of stdout.split("\0")) {
+  let branch = null, headOid = null, unborn = false, detached = false;
+  /** @type {Change[]} */ const staged = [];
+  /** @type {Change[]} */ const changes = [];
+  /** @type {Change[]} */ const untracked = [];
+  /** @type {Change[]} */ const conflicts = [];
+
+  const entries = stdout.split("\0");
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
     if (entry.startsWith("# branch.oid ")) {
       const oid = entry.slice("# branch.oid ".length);
-      out.unborn = oid === "(initial)";
-      out.headOid = out.unborn ? null : oid;
+      unborn = oid === "(initial)";
+      headOid = unborn ? null : oid;
     } else if (entry.startsWith("# branch.head ")) {
       const head = entry.slice("# branch.head ".length);
-      out.detached = head === "(detached)";
-      out.branch = out.detached ? null : head;
+      detached = head === "(detached)";
+      branch = detached ? null : head;
+    } else if (entry.startsWith("1 ")) {
+      const [xy, path] = fields(entry, 8);
+      if (xy[0] !== ".") staged.push(change(path, xy[0], "staged"));
+      if (xy[1] !== ".") changes.push(change(path, xy[1], "changes"));
+    } else if (entry.startsWith("2 ")) {
+      // A rename or copy in the index: the original path is the next NUL-separated entry.
+      const [xy, path] = fields(entry, 9);
+      const oldPath = entries[++i];
+      if (xy[0] !== ".") staged.push(change(path, xy[0], "staged", oldPath));
+      if (xy[1] !== ".") changes.push(change(path, xy[1], "changes"));
+    } else if (entry.startsWith("u ")) {
+      const [, path] = fields(entry, 10);
+      conflicts.push(change(path, "U", "conflicts"));
+    } else if (entry.startsWith("? ")) {
+      untracked.push(change(entry.slice(2), "A", "untracked"));
     }
   }
-  return out;
+  return { branch, headOid, unborn, detached, groups: Object.freeze({ staged, changes, untracked, conflicts }) };
+}
+
+/**
+ * Splits an entry into its XY field and its path: `<kind> <XY> ... <path>`, where
+ * the path is everything after `count` space-separated fields (it may contain spaces).
+ * @param {string} entry @param {number} count
+ */
+function fields(entry, count) {
+  let at = 0;
+  for (let n = 0; n < count; n++) at = entry.indexOf(" ", at) + 1;
+  return [entry.slice(2, 4), entry.slice(at)];
+}
+
+/**
+ * @param {string} path @param {string} letter @param {ChangeGroup} group @param {string} [oldPath]
+ * @returns {Change}
+ */
+function change(path, letter, group, oldPath) {
+  /** @type {ChangeStatus} */
+  const status = letter === "C" ? "A" : /** @type {ChangeStatus} */ (letter);
+  return Object.freeze(oldPath === undefined ? { path, status, group } : { path, oldPath, status, group });
 }

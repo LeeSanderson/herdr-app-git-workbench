@@ -4,6 +4,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, home, theme, run, checking, nextCommand } from "herdr";
+import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -129,12 +130,53 @@ export class SourceControlPanel {
         return screen(t, "Loading…", "");
       case "ready":
         if (!state.repository.snapshot) return screen(t, "Couldn't read the repository", state.repository.key.toplevel);
-        return v_flex().flex_1().min_h(0).p(10).text_color(t.dim).text_size(12)
-          .child(div().truncate().child(state.repository.key.toplevel));
+        return changeLists(t, state.repository.snapshot.groups);
       default:
         return div();
     }
   }
+}
+
+/**
+ * The two stacked lists: Unstaged (Conflicts, Changes, Untracked) above, Staged below.
+ * @param {Record<string, string>} t @param {import("../core/status.js").ChangeGroups} groups
+ */
+function changeLists(t, groups) {
+  const unstaged = [...groups.conflicts, ...groups.changes, ...groups.untracked];
+  return v_flex().flex_1().min_h(0)
+    .child(listHeader(t, "Unstaged", unstaged.length))
+    .child(scrollArea("unstaged", unstaged.length ? unstaged.map((c) => changeRow(t, c)) : [emptyNote(t, "No changes")]))
+    .child(listHeader(t, "Staged", groups.staged.length))
+    .child(scrollArea("staged", groups.staged.length ? groups.staged.map((c) => changeRow(t, c)) : [emptyNote(t, "Nothing staged")]));
+}
+
+/** @param {Record<string, string>} t @param {string} label @param {number} count */
+function listHeader(t, label, count) {
+  return h_flex().flex_none().h(28).px(10).gap(6).items_center().bg(t.chrome).border_b_1().border_color(t.border)
+    .child(div().text_size(11).font_semibold().text_color(t.muted).child(`${label} ${count}`));
+}
+
+/** @param {Record<string, string>} t @param {string} text */
+function emptyNote(t, text) {
+  return div().p(10).text_size(12).text_color(t.dim).child(text);
+}
+
+/**
+ * One Change: a coloured status letter, the dim folder, the bold file name and, for a rename, its old path.
+ * @param {Record<string, string>} t @param {import("../core/status.js").Change} change
+ */
+function changeRow(t, change) {
+  const path = printable(change.path);
+  const row = h_flex().id(`row-${change.group}:${change.path}`).flex_none().h(24).px(10).gap(8).items_center()
+    .hover((s) => s.bg(t.hover))
+    .child(div().flex_none().w(12).text_size(11).font_semibold().text_color(statusColor(t, change)).child(statusLetter(change)))
+    .child(h_flex().flex_1().min_w(0)
+      .child(div().flex_shrink(1).min_w(0).truncate().text_color(t.dim).child(folderOf(path)))
+      .child(div().flex_none().font_semibold().child(nameOf(path))));
+  if (change.oldPath !== undefined) {
+    row.child(div().flex_shrink(1).min_w(0).max_w(160).truncate().text_size(11).text_color(t.dim).child(`← ${printable(change.oldPath)}`));
+  }
+  return row;
 }
 
 /** A centred title and explanation for a state with nothing to list. */

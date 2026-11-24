@@ -12,6 +12,7 @@ import { parseStatus } from "./status.js";
  *   headOid: string | null,
  *   unborn: boolean,
  *   detached: boolean,
+ *   groups: import("./status.js").ChangeGroups,
  * }>} Snapshot
  */
 
@@ -50,7 +51,7 @@ export function createRepository({ git, key }) {
 
     /** Re-reads the repository from Git. @returns {Promise<{ ok: boolean, error?: { summary: string, detail: string } }>} */
     async refresh() {
-      const r = await git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch"], { cwd: key.toplevel, read: true });
+      const r = await git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], { cwd: key.toplevel, read: true });
       if (!r.ok) {
         const detail = r.stderr.trim();
         return { ok: false, error: { summary: detail.split("\n")[0] || "git status failed", detail } };
