@@ -110,7 +110,7 @@ function createDiffDocument(patch) {
     adds,
     dels,
     truncated: false,
-    /** @param {"split"} mode */
+    /** @param {import("./rows.js").RowMode} mode */
     rows(mode) {
       let rows = cache.get(mode);
       if (!rows) cache.set(mode, (rows = buildRows(patch.body, mode)));
