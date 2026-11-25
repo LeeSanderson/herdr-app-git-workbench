@@ -85,3 +85,9 @@ const norm = (p) => {
   const s = p.replace(/\\/g, "/").replace(/\/+$/, "");
   return process.platform === "win32" ? s.toLowerCase() : s;
 };
+
+/** The document of a loadDiff result; fails the test with Git's error otherwise. */
+export function docOf(result) {
+  if (!result.ok) throw new Error(`loadDiff failed: ${result.error.detail}`);
+  return result.doc;
+}

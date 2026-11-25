@@ -98,7 +98,7 @@ export function createWorkbench(platform) {
 
     /**
      * Loads a Diff target's DiffDocument. It needs no followed Repository and
-     * skips every queue. Rejects with DiffLoadError when git can't diff it.
+     * skips every queue. Resolves `{ ok: false, error }` when git can't diff it.
      * @param {import("./diff-target.js").DiffTarget} target
      */
     loadDiff(target) {

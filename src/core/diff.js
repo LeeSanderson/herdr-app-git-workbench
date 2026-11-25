@@ -3,6 +3,7 @@
 // and parses the patch into a line model. Rows for display come from rows.js.
 
 import { buildRows } from "./rows.js";
+import { actionError } from "./errors.js";
 
 /** @typedef {ReturnType<import("./git.js").createGit>} Git */
 /** @typedef {import("./diff-target.js").DiffTarget} DiffTarget */
@@ -27,18 +28,16 @@ const SECTIONS = "-U3";
 export const LINE_LIMIT = 5000;
 const DIFF_FLAGS = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"];
 
-export class DiffLoadError extends Error {
-  /** @param {string} message @param {string} detail */
-  constructor(message, detail) {
-    super(message);
-    this.name = "DiffLoadError";
-    this.detail = detail;
-  }
-}
+/**
+ * What loading a Diff target gives: its document, or why Git couldn't diff it.
+ * @typedef {{ ok: true, doc: DiffDocument } | { ok: false, error: import("./errors.js").ActionError }} DiffResult
+ */
 
 /**
- * The `git diff` arguments for a target's sides. Paths always follow "--".
+ * The `git diff` arguments for a target's sides, or null for sides Phase 1 never
+ * makes. Paths always follow "--".
  * @param {DiffTarget} t @param {string} context WHOLE_FILE or SECTIONS
+ * @returns {string[] | null}
  */
 function diffArgs(t, context) {
   const flags = [...DIFF_FLAGS, context];
@@ -48,7 +47,7 @@ function diffArgs(t, context) {
     return [...flags, "--cached", "-M", "--", ...paths];
   }
   if (t.left === "INDEX" && t.right === "WORKTREE") return [...flags, "--", t.newPath];
-  throw new Error(`Unsupported Diff target sides ${t.left}→${t.right}`);
+  return null;
 }
 
 /**
@@ -83,21 +82,26 @@ async function lineCount(git, target, which) {
  * Repository's queue, so a diff never waits behind a stage or commit.
  * When the larger side has more than LINE_LIMIT lines, only the changed
  * sections load (`truncated`), with gap rows for the unchanged lines between them.
+ * Errors are values: a failed diff resolves `{ ok: false, error }`; only
+ * GitNotFound and GitTimeout reject.
  * @param {Git} git @param {DiffTarget} target
+ * @returns {Promise<DiffResult>}
  */
 export async function loadDiff(git, target) {
   const { machine, toplevel } = target.repository;
   const [oldLines, newLines] = await Promise.all([lineCount(git, target, "left"), lineCount(git, target, "right")]);
   const lines = Math.max(oldLines, newLines);
   const truncated = lines > LINE_LIMIT;
-  const r = await git.run(machine, diffArgs(target, truncated ? SECTIONS : WHOLE_FILE), { cwd: toplevel, read: true });
+  const args = diffArgs(target, truncated ? SECTIONS : WHOLE_FILE);
+  if (!args) {
+    const message = `Unsupported Diff target sides ${target.left}→${target.right}`;
+    return { ok: false, error: { summary: message, detail: message } };
+  }
+  const r = await git.run(machine, args, { cwd: toplevel, read: true });
   // `--no-index` exits 1 when the files differ; anything above that is an error.
   const failed = target.left === "EMPTY" ? r.code > 1 || r.code < 0 : !r.ok;
-  if (failed) {
-    const detail = r.stderr.trim();
-    throw new DiffLoadError(detail.split("\n")[0] || "git diff failed", detail);
-  }
-  return createDiffDocument(target, parsePatch(r.stdout, truncated ? oldLines : undefined), { truncated, lines });
+  if (failed) return { ok: false, error: actionError(r.stderr, "git diff failed") };
+  return { ok: true, doc: createDiffDocument(target, parsePatch(r.stdout, truncated ? oldLines : undefined), { truncated, lines }) };
 }
 
 /**

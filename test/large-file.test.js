@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { initRepo, git, write, lines, cleanup } from "./helpers/repo.js";
+import { initRepo, git, write, lines, cleanup, docOf } from "./helpers/repo.js";
 import { createGit } from "../src/core/git.js";
 import { nodePlatform } from "../src/adapters/node-platform.js";
 import { diffTargetFor } from "../src/core/diff-target.js";
@@ -15,7 +15,7 @@ const file = (n, edits = {}) =>
   lines(Array.from({ length: n }, (_, i) => edits[i + 1] ?? (i % 1000 === 0 ? `section ${i + 1}` : `  row ${i + 1}`)));
 
 const load = (root, path, group = "changes", status = "M") =>
-  loadDiff(gitRunner, diffTargetFor({ machine: null, toplevel: root }, { path, status, group }));
+  loadDiff(gitRunner, diffTargetFor({ machine: null, toplevel: root }, { path, status, group })).then(docOf);
 
 /** A compact picture of a row: gap rows as "gap N title", others as "kind left|right". */
 const pic = (r) => r.kind === "gap"

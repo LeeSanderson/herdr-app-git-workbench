@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { initRepo, git, write, lines, cleanup } from "./helpers/repo.js";
+import { initRepo, git, write, lines, cleanup, docOf } from "./helpers/repo.js";
 import { createGit } from "../src/core/git.js";
 import { nodePlatform } from "../src/adapters/node-platform.js";
 import { diffTargetFor } from "../src/core/diff-target.js";
@@ -13,7 +13,7 @@ const gitRunner = createGit(nodePlatform);
 /** Loads the Diff view's split rows for `path` in `group`. */
 async function splitRows(root, path, group = "changes") {
   const target = diffTargetFor({ machine: null, toplevel: root }, { path, status: "M", group });
-  const doc = await loadDiff(gitRunner, target);
+  const doc = docOf(await loadDiff(gitRunner, target));
   return { doc, rows: doc.rows("split") };
 }
 
@@ -111,7 +111,7 @@ test("a staged rename shows the old file against the new one", async () => {
   write(root, "new.txt", lines(["a", "b", "c", "D"]));
   git(root, "add", "new.txt");
   const target = diffTargetFor({ machine: null, toplevel: root }, { path: "new.txt", oldPath: "old.txt", status: "R", group: "staged" });
-  const rows = (await loadDiff(gitRunner, target)).rows("split");
+  const rows = docOf(await loadDiff(gitRunner, target)).rows("split");
   assert.deepEqual(rows.map(pic), ["ctx 1:a | 1:a", "ctx 2:b | 2:b", "ctx 3:c | 3:c", "mod 4:d | 4:D"]);
 });
 
@@ -119,7 +119,7 @@ test("an untracked file shows every line as added", async () => {
   const root = initRepo();
   write(root, "u.txt", lines(["new", "file"]));
   const target = diffTargetFor({ machine: null, toplevel: root }, { path: "u.txt", status: "A", group: "untracked" });
-  const doc = await loadDiff(gitRunner, target);
+  const doc = docOf(await loadDiff(gitRunner, target));
   assert.deepEqual(doc.rows("split").map(pic), ["add - | 1:new", "add - | 2:file"]);
   assert.equal(doc.adds, 2);
 });
@@ -133,10 +133,13 @@ test("a missing final newline is marked on its line", async () => {
   assert.equal(rows[1].right.noeol, true);
 });
 
-test("a diff that git can't produce rejects with git's message", async () => {
+test("a diff that git can't produce is an error value with git's message", async () => {
   const root = initRepo();
   const target = diffTargetFor({ machine: null, toplevel: root + "/missing" }, { path: "a", status: "M", group: "changes" });
-  await assert.rejects(loadDiff(gitRunner, target), { name: "DiffLoadError" });
+  const result = await loadDiff(gitRunner, target);
+  assert.equal(result.ok, false);
+  assert.ok(result.error.summary.length > 0);
+  assert.ok(result.error.detail.includes(result.error.summary));
 });
 
 test("a configured textconv filter or external diff tool doesn't change the Diff view", async () => {
@@ -153,5 +156,5 @@ test("the Workbench loads a Diff target without following its Repository", async
   write(root, "a.txt", lines(["two"]));
   const workbench = createWorkbench(nodePlatform);
   const target = diffTargetFor({ machine: null, toplevel: root }, { path: "a.txt", status: "M", group: "changes" });
-  assert.deepEqual((await workbench.loadDiff(target)).rows("split").map(pic), ["mod 1:one | 1:two"]);
+  assert.deepEqual(docOf(await workbench.loadDiff(target)).rows("split").map(pic), ["mod 1:one | 1:two"]);
 });

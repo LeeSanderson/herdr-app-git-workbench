@@ -7,15 +7,18 @@
 // load runs at a time; reloads asked for meanwhile merge into one follow-up.
 // While the Repository is not followed, the last document stays and `stale` is true.
 
+import { createSignal, coalesce } from "./signal.js";
+import { messageOf } from "./errors.js";
+
 /** @typedef {import("./diff-target.js").DiffTarget} DiffTarget */
 /** @typedef {import("./diff.js").DiffDocument} DiffDocument */
 /** @typedef {import("./repository.js").Repository} Repository */
 /**
  * The part of the Workbench a live Diff uses.
  * @typedef {{
- *   repository(key: import("./repository.js").RepositoryKey): Repository | undefined,
+ *   repository(key: import("./repository-key.js").RepositoryKey): Repository | undefined,
  *   subscribe(fn: () => void): () => void,
- *   loadDiff(target: DiffTarget): Promise<DiffDocument>,
+ *   loadDiff(target: DiffTarget): Promise<import("./diff.js").DiffResult>,
  * }} DiffSource
  */
 
@@ -29,51 +32,32 @@ export function createLiveDiff(workbench, target) {
   /** @type {string | null} */
   let error = null;
   let disposed = false;
-  /** @type {Set<() => void>} */
-  const listeners = new Set();
+  const changes = createSignal();
   const changed = () => {
-    if (!disposed) for (const fn of [...listeners]) fn();
+    if (!disposed) changes.emit();
   };
 
-  // One load in flight; reloads asked for meanwhile share one follow-up load.
-  /** @type {Promise<void> | null} */
-  let running = null;
-  /** @type {Promise<void> | null} */
-  let followUp = null;
+  let loading = false;
+  const load = coalesce(async () => {
+    loading = true;
+    try {
+      return await workbench.loadDiff(target);
+    } catch (err) {
+      // GitNotFound / GitTimeout
+      return /** @type {const} */ ({ ok: false, error: { summary: messageOf(err), detail: messageOf(err) } });
+    } finally {
+      loading = false;
+    }
+  }, (result) => {
+    if (disposed) return;
+    if (result.ok) {
+      doc = result.doc;
+      error = null;
+    } else error = result.error.summary;
+    changed();
+  });
   /** @returns {Promise<void>} */
-  function reload() {
-    if (disposed) return Promise.resolve();
-    if (!running) {
-      const load = (async () => {
-        /** @type {{ doc: DiffDocument } | { error: string }} */
-        let result;
-        try {
-          // Always asynchronous, so `load` is assigned before it is compared below.
-          result = { doc: await Promise.resolve().then(() => workbench.loadDiff(target)) };
-        } catch (err) {
-          result = { error: String(/** @type {any} */ (err)?.message ?? err) };
-        }
-        // Cleared before telling listeners, so a reload they ask for starts a new load.
-        if (running === load) running = null;
-        if (disposed) return;
-        if ("doc" in result) {
-          doc = result.doc;
-          error = null;
-        } else error = result.error;
-        changed();
-      })();
-      running = load;
-      return load;
-    }
-    if (!followUp) {
-      const next = () => {
-        followUp = null;
-        return running ?? reload();
-      };
-      followUp = running.then(next, next);
-    }
-    return followUp;
-  }
+  const reload = () => (disposed ? Promise.resolve() : load());
 
   // Following: re-subscribe whenever the Workbench's followed Repositories change.
   /** @type {Repository | undefined} */
@@ -104,7 +88,7 @@ export function createLiveDiff(workbench, target) {
     get doc() {
       return doc;
     },
-    /** The last load's error message, or null when it succeeded. */
+    /** The last load's error summary, or null when it succeeded. */
     get error() {
       return error;
     },
@@ -114,21 +98,18 @@ export function createLiveDiff(workbench, target) {
     },
     /** True while a load runs. */
     get loading() {
-      return running !== null;
+      return loading;
     },
     /** Forces a reload (merged with one already running). */
     reload,
     /** Called after every load and every change of `stale`. @param {() => void} fn @returns {() => void} */
-    onChange(fn) {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
+    onChange: changes.subscribe,
     /** Stops following and notifying. */
     dispose() {
       disposed = true;
       offWorkbench();
       offRepository?.();
-      listeners.clear();
+      changes.clear();
     },
   };
 }

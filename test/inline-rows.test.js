@@ -2,7 +2,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { initRepo, write, lines, cleanup } from "./helpers/repo.js";
+import { initRepo, write, lines, cleanup, docOf } from "./helpers/repo.js";
 import { createGit } from "../src/core/git.js";
 import { nodePlatform } from "../src/adapters/node-platform.js";
 import { diffTargetFor } from "../src/core/diff-target.js";
@@ -15,7 +15,7 @@ const gitRunner = createGit(nodePlatform);
 
 /** Loads the Diff document for `path` in `group`. */
 async function load(root, path, group = "changes", status = "M") {
-  return loadDiff(gitRunner, diffTargetFor({ machine: null, toplevel: root }, { path, status, group }));
+  return loadDiff(gitRunner, diffTargetFor({ machine: null, toplevel: root }, { path, status, group })).then(docOf);
 }
 
 /** A compact picture of an inline row: "kind old new text", "-" for a missing line number. */

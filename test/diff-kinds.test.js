@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { initRepo, git, write, lines, png, cleanup } from "./helpers/repo.js";
+import { initRepo, git, write, lines, png, cleanup, docOf } from "./helpers/repo.js";
 import { createGit } from "../src/core/git.js";
 import { nodePlatform } from "../src/adapters/node-platform.js";
 import { diffTargetFor } from "../src/core/diff-target.js";
@@ -12,7 +12,7 @@ after(cleanup);
 const gitRunner = createGit(nodePlatform);
 
 /** Loads the DiffDocument for `change` in the repository at `root`. */
-const load = (root, change) => loadDiff(gitRunner, diffTargetFor({ machine: null, toplevel: root }, change));
+const load = (root, change) => loadDiff(gitRunner, diffTargetFor({ machine: null, toplevel: root }, change)).then(docOf);
 
 /** A compact picture of a split row: "kind L:text | R:text". */
 const pic = (r) => `${r.kind} ${r.left ? `${r.left.line}:${r.left.text}` : "-"} | ${r.right ? `${r.right.line}:${r.right.text}` : "-"}`;
