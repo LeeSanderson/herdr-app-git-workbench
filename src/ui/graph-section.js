@@ -23,7 +23,7 @@ import { statusColor, printable, iconButton } from "./widgets.js";
  * @typedef {{ buttons: ReturnType<typeof import("../core/sync.js").syncButtons>, run(name: import("../core/sync.js").SyncName): void }} SyncBar
  */
 
-/** The divider's id: the window keeps the dragged sizes under it. */
+/** The divider's id prefix (the Repository's id follows): the window keeps the dragged sizes under it. */
 const SPLIT_ID = "scm-graph-split";
 const LIST_ID = "graph-rows";
 const HEADER_H = 28;
@@ -143,18 +143,27 @@ export class GraphSection {
 
   /**
    * The Change groups and commit box (`top`) above the Graph, split by a draggable
-   * divider. The Graph starts at up to ⅔ of the viewport. Collapsed, the Graph is only
-   * its header and there is no split. Starts the first load.
+   * divider. The Graph starts at up to ⅔ of the viewport, or where the divider was
+   * last dragged in this Repository (remembered through the settings port).
+   * Collapsed, the Graph is only its header and there is no split. Starts the first load.
+   *
+   * `resizable_panel().size()` is only the initial size: the window keeps the
+   * dragged sizes under the group's id across repaints, so passing it on every
+   * render doesn't undo a drag. The id names the Repository, so each Repository
+   * keeps its own split while the panel moves between them.
    * @param {Record<string, string>} t @param {Graph} graph @param {any} top @param {SyncBar} sync
+   * @param {string} repositoryId
    */
-  layout(t, graph, top, sync) {
+  layout(t, graph, top, sync, repositoryId) {
     if (graph.state.kind === "idle") void graph.load();
     const section = this.section(t, graph, sync);
     if (this.collapsed) return v_flex().flex_1().min_h(0).child(top).child(section);
     const viewport = /** @type {any} */ (globalThis).window?.viewport_size?.();
     const height = viewport?.height ?? 900;
-    const topPx = Math.max(160, Math.round(height / 3));
-    return v_resizable(SPLIT_ID).flex_1().min_h(0)
+    const topPx = graph.splitSize ?? Math.max(160, Math.round(height / 3));
+    return v_resizable(`${SPLIT_ID}:${repositoryId}`).flex_1().min_h(0)
+      // Called once a drag ends; sizes[0] is the top panel's height.
+      .on_resize((sizes) => graph.setSplitSize(sizes[0]))
       .child(resizable_panel().size(topPx).size_range(140).child(v_flex().size_full().child(top)))
       .child(resizable_panel().size_range(HEADER_H + TOOLBAR_H + 60).child(section));
   }

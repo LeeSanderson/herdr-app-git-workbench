@@ -404,7 +404,7 @@ export class SourceControlPanel {
           .child(this.graph.layout(t, repository.graph, v_flex().size_full()
             .child(changeLists(t, snapshot.groups, actions))
             .child(this.commitBox(t, snapshot)),
-          { buttons: syncButtons(snapshot), run: (name) => void repository.sync(name) }));
+          { buttons: syncButtons(snapshot), run: (name) => void repository.sync(name) }, repository.id));
       }
       default:
         return div();

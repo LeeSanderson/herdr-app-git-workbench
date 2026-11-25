@@ -39,6 +39,9 @@ export const REF_FILTERS = Object.freeze(["auto", "all", "current"]);
 /** The per-Repository setting key of the Ref filter. @param {import("./repository-key.js").RepositoryKey} key */
 export const refFilterSetting = (key) => `gitwb.refFilter.${repositoryId(key)}`;
 
+/** The per-Repository setting key of the dragged split size. @param {import("./repository-key.js").RepositoryKey} key */
+export const splitSizeSetting = (key) => `gitwb.graphSplit.${repositoryId(key)}`;
+
 /**
  * The status fields the Ref filter reads.
  * @typedef {Pick<import("./repository.js").Snapshot, "unborn" | "detached" | "upstream" | "ahead">} HeadStatus
@@ -87,6 +90,9 @@ export function createGraph({ git, key, status, settings }) {
   const saved = settings.getSetting(refFilterSetting(key));
   /** @type {RefFilter} */
   let filter = REF_FILTERS.find((f) => f === saved) ?? "auto";
+  const savedSplit = settings.getSetting(splitSizeSetting(key));
+  /** The dragged split size, or null when never dragged. @type {number | null} */
+  let splitSize = typeof savedSplit === "number" && savedSplit > 0 ? savedSplit : null;
   let disposed = false;
   const changes = createSignal();
   /** Commits to load: the first page, plus one page per Load more. Every load, reloads too, asks for this many. */
@@ -228,6 +234,23 @@ export function createGraph({ git, key, status, settings }) {
       settings.setSetting(refFilterSetting(key), next);
       changes.emit();
       return load();
+    },
+
+    /**
+     * The height in pixels of the Change groups above the Graph, as last dragged
+     * in this Repository; null until a drag.
+     * @returns {number | null}
+     */
+    get splitSize() {
+      return splitSize;
+    },
+
+    /** Remembers a dragged split size for this Repository. @param {number} px */
+    setSplitSize(px) {
+      const next = Math.round(px);
+      if (!(next > 0) || next === splitSize) return;
+      splitSize = next;
+      settings.setSetting(splitSizeSetting(key), next);
     },
 
     /** True while a load runs, a reload too (which keeps the previous state until it lands). */
