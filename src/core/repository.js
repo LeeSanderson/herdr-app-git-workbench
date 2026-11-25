@@ -113,6 +113,11 @@ export function createRepository({ git, key, queue, platform, dirs }) {
   /** The history beside the Change groups. Its loads skip the queue (see graph.js). */
   const graph = createGraph({ git, key, status: () => status, settings: platform });
 
+  /** Reloads the Graph if it has loaded once and the Repository is still followed; never rejects. */
+  function reloadGraph() {
+    return graph.started && !disposed ? graph.load() : Promise.resolve();
+  }
+
   /** Rebuilds the snapshot from the latest status, the queue and lastError, and tells listeners. */
   function publish() {
     if (!status) return;
@@ -159,10 +164,10 @@ export function createRepository({ git, key, queue, platform, dirs }) {
       debouncing = false;
     }
     if (disposed) return;
-    const reloadGraph = refsMoved;
+    const moved = refsMoved;
     refsMoved = false;
     await refresh().catch(() => {});
-    if (reloadGraph && graph.started && !disposed) await graph.load();
+    if (moved) await reloadGraph();
   }
 
   /** @type {import("./platform.js").Watch[]} */
@@ -281,7 +286,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
         return r.ok ? null : actionError(outputOf(r), "git commit failed");
       });
       // The new commit shows straight away; the reload runs beside the queue.
-      if (result.ok && graph.started) void graph.load();
+      if (result.ok) void reloadGraph();
       return result;
     },
 
@@ -320,7 +325,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
       if (!op) throw new Error(`Unknown sync: ${name}`);
       const result = await act(op.running, "long", (timeoutClass, relabel) =>
         runSync({ git, machine: key.machine, cwd: key.toplevel, timeoutClass, sleep: platform.sleep, relabel }, op, options));
-      if (graph.started && !disposed) await graph.load();
+      await reloadGraph();
       return result;
     },
 

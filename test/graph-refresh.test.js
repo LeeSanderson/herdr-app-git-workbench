@@ -135,3 +135,28 @@ test("a Ref change before the Graph's first load doesn't load it", async () => {
 
   assert.equal(counter.repository.graph.state.kind, "idle");
 });
+
+test("a commit that lands after the Repository is disposed doesn't reload its Graph", async () => {
+  /** @type {string[][]} */
+  const execsAfterDispose = [];
+  let disposed = false;
+  const platform = { ...nodePlatform, exec: (/** @type {any[]} */ ...a) => {
+    if (disposed) execsAfterDispose.push(a[1]);
+    return nodePlatform.exec(a[0], a[1], a[2]);
+  } };
+  const root = initRepo();
+  const workbench = createWorkbench(platform);
+  await workbench.follow({ machine: null, folder: root });
+  const repository = workbench.state.repository;
+  await repository.graph.load();
+
+  write(root, "b.txt", "b\n");
+  await repository.stage(["b.txt"]);
+  const committing = repository.commit({ message: "Late" });
+  repository.dispose();
+  disposed = true;
+  assert.equal((await committing).ok, true);
+  await new Promise((r) => setTimeout(r, 200));
+
+  assert.deepEqual(execsAfterDispose.filter((args) => args.includes("log")), [], "no git log after dispose");
+});
