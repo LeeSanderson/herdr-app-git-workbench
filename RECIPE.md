@@ -68,10 +68,12 @@ and a commit box. Clicking a change opens a side-by-side (or inline) diff.
   repositories): Git runner and discovery, status parsing (`git status
   --porcelain=v2 -z --branch --untracked-files=all`), Repository snapshots, the
   command queue, watch filtering, diff loading and row building. It reaches Herdr
-  only through a platform object `{exec, watch, readTextFile, sleep, gitCandidates}`.
+  only through a platform object `{exec, watch, readTextFile, sleep, gitCandidates,
+  getSetting, setSetting}`.
 - `src/ui/`: the panel, the Diff view, the tab registry and the Herdr platform.
 - **`herdr` functions:** `exec`, `readTextFile`, `watchFolder`, `spaces`, `focused`,
-  `panes`, `home`, `theme`, `settings`, `shared`/`setShared` (`gitwb.diffMode`),
+  `panes`, `home`, `theme`, `settings`, `shared`/`setShared` (`gitwb.diffMode`, and
+  `gitwb.refFilter.<repository id>` through the platform's settings),
   `nextCommand`, `openOverlay`, `run`, `checking`, `window`.
 - **Commands it runs:** `tab.new`, `tab.select`, `layout.hide {id: "git-workbench"}`.
 - **Shipped mods it uses:** `confirm` (discard dialog), with
