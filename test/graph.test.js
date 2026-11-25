@@ -125,10 +125,108 @@ test("committing reloads a loaded Graph", async () => {
 
   write(root, "b.txt", "b\n");
   await repository.stage(["b.txt"]);
-  const reloaded = new Promise((resolve) => repository.graph.subscribe(resolve));
+  const reloaded = new Promise((resolve) => repository.graph.subscribe(() => !repository.graph.loading && resolve(undefined)));
   assert.deepEqual(await repository.commit({ message: "Add b" }), { ok: true });
   await reloaded;
   const state = repository.graph.state;
   assert.equal(state.kind, "ready");
   assert.deepEqual(state.commits.map((c) => c.subject), ["Add b", "Initial"]);
+});
+
+test("a Graph load that runs past 60 s is an inline error, and Retry loads it", async () => {
+  const root = initRepo();
+  let stall = true;
+  const slow = {
+    ...nodePlatform,
+    /** @param {string} cmd @param {string[]} args @param {any} opts */
+    exec(cmd, args, opts) {
+      if (stall && args.includes("log")) {
+        assert.equal(opts.timeout, 60_000);
+        return Promise.reject(Object.assign(new Error("timed out"), { timedOut: true }));
+      }
+      return nodePlatform.exec(cmd, args, opts);
+    },
+  };
+  const { repository } = await follow(root, /** @type {any} */ (slow));
+
+  await repository.graph.load();
+  const state = repository.graph.state;
+  assert.equal(state.kind, "error");
+  assert.equal(state.error.summary, "git log timed out after 60 s");
+  assert.equal(repository.snapshot.running, null);
+
+  stall = false;
+  const { commits } = await loaded(repository); // Retry
+  assert.deepEqual(commits.map((c) => c.subject), ["Initial"]);
+});
+
+test("a reload keeps the rows on screen and says it is loading until it lands", async () => {
+  const root = initRepo();
+  const { repository } = await follow(root);
+  const graph = repository.graph;
+  await loaded(repository);
+  assert.equal(graph.loading, false);
+
+  commit(root, "b.txt", "b\n", "Second");
+  const reload = graph.load();
+  await Promise.resolve();
+  assert.equal(graph.loading, true);
+  assert.equal(graph.state.kind, "ready");
+  assert.equal(graph.state.commits.length, 1);
+  await reload;
+  assert.equal(graph.loading, false);
+  assert.equal(graph.state.commits.length, 2);
+});
+
+/** A repository with Initial and `n` more (empty) commits. @param {number} n */
+function longHistory(n) {
+  const root = initRepo();
+  for (let i = 1; i <= n; i++) git(root, "commit", "-q", "--allow-empty", "-m", `Commit ${i}`);
+  return root;
+}
+
+test("Load more adds 50 commits below the rows already shown, then hides at the end of history", async () => {
+  const root = longHistory(119); // 120 commits with Initial
+  const { repository } = await follow(root);
+  const first = await loaded(repository);
+  assert.equal(first.commits.length, 50);
+
+  await repository.graph.loadMore();
+  const second = repository.graph.state;
+  assert.equal(second.kind, "ready");
+  assert.equal(second.commits.length, 100);
+  assert.equal(second.hasMore, true);
+  assert.deepEqual(second.commits.slice(0, 50), first.commits, "rows already shown don't move");
+  assert.deepEqual(second.rows.slice(0, 50), first.rows);
+
+  await repository.graph.loadMore();
+  const third = repository.graph.state;
+  assert.equal(third.kind, "ready");
+  assert.equal(third.commits.length, 120);
+  assert.equal(third.commits.at(-1).subject, "Initial");
+  assert.equal(third.hasMore, false);
+});
+
+test("a reload keeps the loaded count", async () => {
+  const root = longHistory(60);
+  const { repository } = await follow(root);
+  await loaded(repository);
+  await repository.graph.loadMore();
+
+  commit(root, "b.txt", "b\n", "Newer");
+  const { commits, hasMore } = await loaded(repository);
+  assert.equal(commits.length, 62);
+  assert.equal(commits[0].subject, "Newer");
+  assert.equal(hasMore, false);
+});
+
+test("Load more asked for while a load runs applies after it: the latest request wins", async () => {
+  const root = longHistory(60);
+  const { repository } = await follow(root);
+  const first = repository.graph.load();
+  const more = repository.graph.loadMore();
+  await Promise.all([first, more]);
+  const state = repository.graph.state;
+  assert.equal(state.kind, "ready");
+  assert.equal(state.commits.length, 61);
 });

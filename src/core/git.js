@@ -5,7 +5,12 @@
 
 /** @typedef {import("./platform.js").Platform} Platform */
 /** @typedef {{ ok: boolean, code: number, stdout: string, stderr: string }} GitResult */
-/** @typedef {"short" | "long"} TimeoutClass */
+/**
+ * short: quick commands (30 s). graph: a Graph history load, which can be slow on
+ * a very large history (60 s). long: commands that may wait on hooks or the
+ * network (10 min).
+ * @typedef {"short" | "graph" | "long"} TimeoutClass
+ */
 
 export class GitNotFound extends Error {
   /** @param {string | null} machine */
@@ -26,7 +31,7 @@ export class GitTimeout extends Error {
   }
 }
 
-export const TIMEOUTS = { short: 30_000, long: 600_000 };
+export const TIMEOUTS = { short: 30_000, graph: 60_000, long: 600_000 };
 export const STANDARD_FLAGS = ["--no-pager", "-c", "core.quotepath=off"];
 export const READ_FLAGS = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
 
