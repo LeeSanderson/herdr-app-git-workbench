@@ -7,6 +7,7 @@ import { isRelevant, watchRoots } from "./watch-filter.js";
 import { repositoryKey, repositoryId } from "./repository-key.js";
 import { actionError, messageOf } from "./errors.js";
 import { createSignal, coalesce } from "./signal.js";
+import { createGraph } from "./graph.js";
 
 /** Quiet time after the last relevant file event before refreshing. */
 export const DEBOUNCE_MS = 400;
@@ -108,6 +109,8 @@ export function createRepository({ git, key, queue, platform, dirs }) {
   let watchError = null;
   let disposed = false;
   const changes = createSignal();
+  /** The history beside the Change groups. Its loads skip the queue (see graph.js). */
+  const graph = createGraph({ git, key, status: () => status });
 
   /** Rebuilds the snapshot from the latest status, the queue and lastError, and tells listeners. */
   function publish() {
@@ -224,6 +227,9 @@ export function createRepository({ git, key, queue, platform, dirs }) {
     /** Re-reads the repository from Git; a call while one runs merges into a single follow-up. */
     refresh,
 
+    /** The Graph: history from HEAD with its lane layout. Nothing loads until `graph.load()`. */
+    graph,
+
     /**
      * Stages `paths` (relative to the top level) with `git add`, which also adds
      * untracked files and marks a Conflict resolved.
@@ -255,13 +261,16 @@ export function createRepository({ git, key, queue, platform, dirs }) {
      * `amend: true` adds `--amend` (Phase 2; the Phase 1 UI never passes it).
      * @param {{ message: string, amend?: boolean }} options @returns {Promise<ActionResult>}
      */
-    commit({ message, amend = false }) {
-      return act("Committing…", "long", async (timeoutClass) => {
+    async commit({ message, amend = false }) {
+      const result = await act("Committing…", "long", async (timeoutClass) => {
         const args = ["commit", ...(amend ? ["--amend"] : []), "-m", message];
         const r = await git.run(key.machine, args, { cwd: key.toplevel, timeoutClass });
         // Hooks write to stderr; Git's own refusals ("nothing to commit") go to stdout.
         return r.ok ? null : actionError([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
       });
+      // The new commit shows straight away; the reload runs beside the queue.
+      if (result.ok && graph.started) void graph.load();
+      return result;
     },
 
     /**
@@ -297,6 +306,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
       disposed = true;
       for (const w of watches.splice(0)) w.cancel();
       offQueue();
+      graph.dispose();
       changes.clear();
     },
   };
