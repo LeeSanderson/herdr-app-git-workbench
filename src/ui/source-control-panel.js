@@ -11,6 +11,7 @@ import { isDiscardable, unstagedChanges, folderOf, nameOf } from "../core/status
 import { messageOf } from "../core/errors.js";
 import { openDiff, MOD } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
+import { GraphSection } from "./graph-section.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -18,7 +19,7 @@ import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from 
 const LAYOUT_ID = "git-workbench";
 
 /**
- * Resolves at the next Workbench state change or followed-Repository snapshot change.
+ * Resolves at the next Workbench state change, or followed-Repository snapshot or Graph change.
  * @param {Workbench} workbench
  * @returns {Promise<void>}
  */
@@ -32,7 +33,7 @@ function nextChange(workbench) {
     };
     offs.push(workbench.subscribe(done));
     const state = workbench.state;
-    if (state.kind === "ready") offs.push(state.repository.subscribe(done));
+    if (state.kind === "ready") offs.push(state.repository.subscribe(done), state.repository.graph.subscribe(done));
   });
 }
 
@@ -63,6 +64,8 @@ export class SourceControlPanel {
      */
     this.pendingDiscard = null;
     this.handle = cx.focus_handle();
+    /** The Graph below the Change groups (its own module). */
+    this.graph = new GraphSection();
     /** What the last render saw of focus: the active space, window and panel focus. */
     this.seenFocus = { space: /** @type {string | null} */ (null), window: false, panel: false };
     /** The commit message box. Typing re-renders so the status line follows the message. */
@@ -383,8 +386,9 @@ export class SourceControlPanel {
           .when(snapshot.running !== null, (e) => e.child(runningStrip(t, snapshot.running.label)))
           .when(snapshot.lastError !== null, (e) => e.child(this.errorStrip(t, snapshot.lastError)))
           .when(snapshot.watchError !== null, (e) => e.child(watchBand(t, snapshot.watchError)))
-          .child(changeLists(t, snapshot.groups, actions))
-          .child(this.commitBox(t, snapshot));
+          .child(this.graph.layout(t, repository.graph, v_flex().size_full()
+            .child(changeLists(t, snapshot.groups, actions))
+            .child(this.commitBox(t, snapshot))));
       }
       default:
         return div();
