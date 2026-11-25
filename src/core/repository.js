@@ -197,10 +197,11 @@ export function createRepository({ git, key, queue, platform, dirs }) {
    * @param {TimeoutClass} timeoutClass
    * @param {(timeoutClass: TimeoutClass, relabel: (label: string) => void) => Promise<ActionError | null>} command
    *   `relabel` changes the label while it runs.
+   * @param {{ sync?: boolean }} [kind] `sync` marks a Fetch, Pull or Push in `snapshot.running`.
    * @returns {Promise<ActionResult>}
    */
-  async function act(label, timeoutClass, command) {
-    const error = await queue.run({ label, timeoutClass }, async (entry, relabel) => {
+  async function act(label, timeoutClass, command, { sync = false } = {}) {
+    const error = await queue.run({ label, timeoutClass, sync }, async (entry, relabel) => {
       /** @type {ActionError | null} */
       let error;
       try {
@@ -324,7 +325,8 @@ export function createRepository({ git, key, queue, platform, dirs }) {
       const op = SYNC_OPS[name];
       if (!op) throw new Error(`Unknown sync: ${name}`);
       const result = await act(op.running, "long", (timeoutClass, relabel) =>
-        runSync({ git, machine: key.machine, cwd: key.toplevel, timeoutClass, sleep: platform.sleep, relabel }, op, options));
+        runSync({ git, machine: key.machine, cwd: key.toplevel, timeoutClass, sleep: platform.sleep, relabel }, op, options),
+      { sync: true });
       await reloadGraph();
       return result;
     },

@@ -97,7 +97,7 @@ test("the running entry's label appears in the snapshot and clears afterwards", 
   rec.hold();
   const staging = repository.stage(["a.txt"]);
   await rec.held();
-  assert.deepEqual(repository.snapshot.running, { label: "Staging…", timeoutClass: "short" });
+  assert.deepEqual(repository.snapshot.running, { label: "Staging…", timeoutClass: "short", sync: false });
   rec.release();
   await staging;
   await repository.unstage(["a.txt"]);
