@@ -1,5 +1,0 @@
-{
-  "global": {
-    "ctrl-shift-g": "layout.toggle:git-workbench"
-  }
-}

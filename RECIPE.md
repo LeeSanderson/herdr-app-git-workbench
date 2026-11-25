@@ -10,7 +10,7 @@ and a commit box. Clicking a change opens a side-by-side (or inline) diff.
 ## What you see
 
 - **Source Control panel:** a 340 px column (min 280, max 900) to the right of
-  Herdr's Files/Changes panel, hidden until `Ctrl+Shift+G`. Top to bottom:
+  Herdr's Files/Changes panel, hidden until shown from the command palette. Top to bottom:
   - Top bar: `⎇ branch → upstream`, an `↑a ↓b` pill when there is an upstream, an
     operation badge (Merging, Rebasing, Cherry-picking, Reverting), then ⟳ (refresh)
     and ✕ (hide). A detached HEAD shows "detached HEAD" in `ansi3` and the short oid.
@@ -79,14 +79,18 @@ and a commit box. Clicking a change opens a side-by-side (or inline) diff.
   `%LOCALAPPDATA%\Programs\Git\cmd\git.exe`.
 - **Layout block** (in a personal clone of `main`, `work-body` row, after `panel`):
   `{"id":"git-workbench","type":"block","hidden":true,"size":{"px":340},"min":280,"max":900,"content":{"mod":"herdr-app-git-workbench"}}`
-- **`keys.json`:** `{"global": {"ctrl-shift-g": "layout.toggle:git-workbench"}}`.
+- **`mod.json`:** `"place": "none"`, `"focusable": true`, and two `"palette"`
+  entries: "Git Workbench: Toggle Source Control" (`layout.toggle {id:
+  "git-workbench"}`) and "Git Workbench: Open Source Control beside this pane"
+  (`pane.split {direction: "right", mod: "herdr-app-git-workbench"}`).
+- **No `keys.json`:** the mod binds no keys; a toggle key is the person's choice.
 
 ## Install
 
 Follow README.md's Install section: copy the folder as a real folder, clone the
 shown layout if it is a shipped one (ask first), add the `git-workbench` block with
-`layout.set` only if no node has that id, merge `keys.json` asking before
-replacing a key the person uses, then `herdr-app check`. Fallback without a
+`layout.set` only if no node has that id, then `herdr-app check`. Leave
+`keys.json` alone. Fallback without a
 personal layout: `pane.split {"direction": "right", "mod": "herdr-app-git-workbench"}`.
 The mod runs `git` in the active space's folder and reads files under its `.git`;
 it does not reach the network.
@@ -112,7 +116,8 @@ it does not reach the network.
 ## Done when
 
 - `npm test` passes and `herdr-app check` on the mod folder reports no errors.
-- `Ctrl+Shift+G` shows and hides the panel; ✕ hides it.
+- The palette's "Git Workbench: Toggle Source Control" shows and hides the panel;
+  ✕ hides it.
 - In a repository with a modified, an untracked and a staged file, each is in the
   right list; ticking moves it between Unstaged and Staged, and `git status` agrees.
 - Clicking a modified file opens a `Δ <file>` tab with tints and intra-line detail;
