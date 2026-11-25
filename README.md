@@ -14,7 +14,7 @@ Git source control and a visual diff for [Herdr Desktop](https://herdr.dev).
   it (you are asked first). Write a message in the commit box and press
   **Commit to &lt;branch&gt;** or `Ctrl+Enter`.
 - **Graph:** a collapsible section below the Change groups, behind a divider you
-  can drag. It lists commits newest first with coloured lanes, Ref badges (HEAD,
+  can drag (its position is remembered per repository). It lists commits newest first with coloured lanes, Ref badges (HEAD,
   branches, remote branches, tags) and a two-line summary. Click a commit to expand
   it in place (details and changed files); click a file to open its Diff view
   against the commit's first parent. The **Auto | All | Current** Ref filter picks
@@ -49,7 +49,9 @@ Fetch, Pull and Push run Git with safe defaults:
 
 - **Fetch** fetches every remote. It prunes only if your `fetch.prune` says so.
 - **Pull** follows your `branch.<name>.rebase`, `pull.rebase` and `pull.ff`
-  config. With none set, it fast-forwards only. It never stashes your changes:
+  config. With none set, it fast-forwards only. `pull.rebase=interactive` (or
+  `branch.<name>.rebase=interactive`) runs as a plain rebase in the Workbench:
+  there is no editor to show the todo list. It never stashes your changes:
   if a pull would overwrite local changes, it says how many files and asks you to
   commit or discard them first. If your branch has diverged from its Upstream, it
   offers a one-off **Pull (merge)** or **Pull (rebase)**, which changes no config.
@@ -67,7 +69,9 @@ Upstream disables Pull. Fetch is always available while nothing else runs.
 
 **Sign-in:** a sync can open a Git Credential Manager window, which may hide
 behind Herdr. After about 15 seconds the running label adds "still waiting — a
-sign-in window may be open". A sync times out after 10 minutes. If sign-in fails,
+sign-in window may be open". A sync times out after 10 minutes. A timeout can't
+show Git's output: Herdr's `exec()` drops the output of a command it stops, so
+**Details** shows only the timeout. If sign-in fails,
 the message names the remote and suggests running the same command (for example
 `git fetch`) in a terminal once; **Details** shows Git's full output.
 
@@ -308,8 +312,8 @@ sends it; don't bind it.
 - **No Abort or Continue** for a merge or rebase that a pull leaves in progress. Use
   a terminal.
 - **No background fetch.** The Graph shows remote commits as of your last Fetch.
-- **A sync cannot be cancelled.** A timed-out sync loses Git's partial output, so its
-  Details show only the timeout.
+- **A sync cannot be cancelled.** A timed-out sync can't show Git's output, because
+  `exec()` drops it on a timeout; its Details show only the timeout.
 - Out of scope for this version: amend, branch management, hunk staging, stash and
   worktree management.
 
