@@ -230,3 +230,21 @@ test("Load more asked for while a load runs applies after it: the latest request
   assert.equal(state.kind, "ready");
   assert.equal(state.commits.length, 61);
 });
+
+test("the selection survives a reload, and drops quietly once an amend rewrote its commit", async () => {
+  const root = initRepo();
+  commit(root, "b.txt", "b\n", "Second");
+  const { repository } = await follow(root);
+  const { commits, head } = await loaded(repository);
+  const graph = repository.graph;
+  const initial = commits[1].oid;
+
+  graph.select({ oid: initial, path: "a.txt" });
+  await loaded(repository);
+  assert.deepEqual(graph.selection, { oid: initial, path: "a.txt" });
+
+  graph.select({ oid: head, path: null });
+  git(root, "commit", "-q", "--amend", "-m", "Second, amended");
+  await loaded(repository);
+  assert.equal(graph.selection, null);
+});
