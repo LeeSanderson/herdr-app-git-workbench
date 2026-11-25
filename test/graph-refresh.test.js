@@ -4,7 +4,8 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { cleanup, initRepo, git, write } from "./helpers/repo.js";
+import fs from "node:fs";
+import { cleanup, initRepo, git, write, tempDir } from "./helpers/repo.js";
 import { createWorkbench } from "../src/core/workbench.js";
 import { nodePlatform } from "../src/adapters/node-platform.js";
 import { fakePlatform, followCounting, untilRefreshed, quiet, watchOf } from "./helpers/fake-platform.js";
@@ -134,6 +135,37 @@ test("a Ref change before the Graph's first load doesn't load it", async () => {
   await quiet(fake);
 
   assert.equal(counter.repository.graph.state.kind, "idle");
+});
+
+/** Whether this git can make a reftable repository (`--ref-format`, git 2.45+). */
+function reftableSupported() {
+  try {
+    git(tempDir("gitwb-probe-"), "init", "-q", "--ref-format=reftable");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The watch is hand-fired with the files the commit left in .git/reftable: Node's
+// own recursive watch on Windows drops events under load (seen dropping every
+// reftable event while other test files ran), so a real watch made this flaky.
+test("in a reftable repository, a commit made in a terminal reloads the Graph", { skip: !reftableSupported() && "this git can't `git init --ref-format=reftable` (needs git 2.45+)" }, async () => {
+  const root = tempDir("gitwb-reftable-");
+  git(root, "init", "-q", "-b", "main", "--ref-format=reftable");
+  for (const [k, v] of [["core.autocrlf", "false"], ["user.name", "Test"], ["user.email", "test@example.invalid"], ["commit.gpgsign", "false"]]) git(root, "config", k, v);
+  commit(root, "a.txt", "a\n", "Initial");
+  const fake = fakePlatform();
+  const { repository } = await followCounting(fake, root);
+  await repository.graph.load();
+  assert.deepEqual(subjects(repository.graph), ["Initial"]);
+
+  commit(root, "b.txt", "b\n", "From the terminal");
+  const reftable = path.join(root, ".git", "reftable");
+  watchOf(fake, root).fire([path.join(root, "b.txt"), ...fs.readdirSync(reftable).map((f) => path.join(reftable, f))]);
+  await until(fake, () => subjects(repository.graph)[0] === "From the terminal");
+
+  assert.deepEqual(subjects(repository.graph), ["From the terminal", "Initial"]);
 });
 
 test("a commit that lands after the Repository is disposed doesn't reload its Graph", async () => {
