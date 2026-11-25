@@ -47,15 +47,22 @@ test("a linked worktree's HEAD and reftable are refs paths; other worktrees' are
   assert.equal(watchLabel("C:/Repo/.git/HEAD", linked), null);
 });
 
-// Git writes `<name>.lock` and renames it into place; the rename reports the real name.
-test("lock files are ignored, under refs too", () => {
+// Git writes `<name>.lock` and renames it into place. A watcher may report only the
+// lock name, so a lock under the Refs paths counts as `refs` (the debounce absorbs
+// the extra event); other lock files are ignored.
+test("lock files under the Refs paths are refs", () => {
   for (const p of [
-    "C:/Repo/.git/index.lock",
     "C:/Repo/.git/HEAD.lock",
     "C:/Repo/.git/refs/heads/main.lock",
     "C:/Repo/.git/packed-refs.lock",
     "C:/Repo/.git/reftable/tables.list.lock",
   ]) {
+    assert.equal(watchLabel(p, local), "refs", p);
+  }
+});
+
+test("other lock files are ignored", () => {
+  for (const p of ["C:/Repo/.git/index.lock", "C:/Repo/.git/config.lock", "C:/Repo/.git/MERGE_HEAD.lock"]) {
     assert.equal(watchLabel(p, local), null, p);
   }
 });
