@@ -6,7 +6,7 @@
 // Extending: a new sync adds an entry to SYNC_OPS; a new failure class adds a
 // rule to FAILURE_RULES and its message to FAILURE_MESSAGES.
 
-import { actionError } from "./errors.js";
+import { actionError, outputOf } from "./errors.js";
 import { GitTimeout } from "./git.js";
 
 /** @typedef {ReturnType<import("./git.js").createGit>} Git */
@@ -58,7 +58,7 @@ export const SYNC_OPS = {
     running: "Pushing…",
     // Never a force flag of any kind, including --force-with-lease.
     async command(ctx) {
-      const branch = (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+      const branch = await currentBranch(ctx);
       // A configured Upstream counts even when its remote ref is gone.
       // A detached HEAD (no branch) gets a plain push and Git's own error.
       if (!branch || (await config(ctx, `branch.${branch}.merge`))) return ctx.run(["push"]);
@@ -93,6 +93,11 @@ async function unmergedCount(ctx) {
   return new Set(r.stdout.split("\0").filter(Boolean).map((e) => e.slice(e.indexOf("\t") + 1))).size;
 }
 
+/** The checked-out branch's short name, or "" when HEAD is detached. @param {SyncContext} ctx */
+async function currentBranch(ctx) {
+  return (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+}
+
 /** Git's spellings of a false boolean. */
 const FALSE = /^(?:false|no|off|0)$/i;
 
@@ -104,7 +109,7 @@ const FALSE = /^(?:false|no|off|0)$/i;
  * @param {SyncContext} ctx @returns {Promise<string[]>}
  */
 async function configuredPullMode(ctx) {
-  const branch = (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+  const branch = await currentBranch(ctx);
   const rebase = (branch && (await config(ctx, `branch.${branch}.rebase`))) || (await config(ctx, "pull.rebase"));
   const ff = await config(ctx, "pull.ff");
   if (!rebase && !ff) return ["--ff-only"];

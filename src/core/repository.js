@@ -5,7 +5,7 @@
 import { parseStatus } from "./status.js";
 import { watchLabel, watchRoots } from "./watch-filter.js";
 import { repositoryKey, repositoryId } from "./repository-key.js";
-import { actionError, messageOf } from "./errors.js";
+import { actionError, errorFrom, messageOf, outputOf } from "./errors.js";
 import { createSignal, coalesce } from "./signal.js";
 import { createGraph } from "./graph.js";
 import { SYNC_OPS, runSync } from "./sync.js";
@@ -202,7 +202,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
         error = await command(entry.timeoutClass, relabel);
       } catch (err) {
         // GitNotFound / GitTimeout
-        error = { summary: messageOf(err), detail: messageOf(err) };
+        error = errorFrom(err);
       }
       lastError = error;
       await self.refresh();
@@ -278,7 +278,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
         const args = ["commit", ...(amend ? ["--amend"] : []), "-m", message];
         const r = await git.run(key.machine, args, { cwd: key.toplevel, timeoutClass });
         // Hooks write to stderr; Git's own refusals ("nothing to commit") go to stdout.
-        return r.ok ? null : actionError([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
+        return r.ok ? null : actionError(outputOf(r), "git commit failed");
       });
       // The new commit shows straight away; the reload runs beside the queue.
       if (result.ok && graph.started) void graph.load();

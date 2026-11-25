@@ -26,3 +26,19 @@ export function actionError(output, fallback) {
 
 /** The message of anything thrown. @param {unknown} err */
 export const messageOf = (err) => String(/** @type {any} */ (err)?.message ?? err);
+
+/**
+ * An ActionError from anything thrown (GitNotFound, GitTimeout): its message is both summary and detail.
+ * @param {unknown} err @returns {ActionError}
+ */
+export function errorFrom(err) {
+  const message = messageOf(err);
+  return { summary: message, detail: message };
+}
+
+/**
+ * Git's output with stderr first, then stdout, each trimmed, blank ones left out.
+ * Hooks and most errors write to stderr; some refusals ("nothing to commit") go to stdout.
+ * @param {{ stderr: string, stdout: string }} result
+ */
+export const outputOf = ({ stderr, stdout }) => [stderr.trim(), stdout.trim()].filter(Boolean).join("\n");

@@ -8,7 +8,7 @@
 // While the Repository is not followed, the last document stays and `stale` is true.
 
 import { createSignal, coalesce } from "./signal.js";
-import { messageOf } from "./errors.js";
+import { errorFrom } from "./errors.js";
 
 /** @typedef {import("./diff-target.js").DiffTarget} DiffTarget */
 /** @typedef {import("./diff.js").DiffDocument} DiffDocument */
@@ -44,7 +44,7 @@ export function createLiveDiff(workbench, target) {
       return await workbench.loadDiff(target);
     } catch (err) {
       // GitNotFound / GitTimeout
-      return /** @type {const} */ ({ ok: false, error: { summary: messageOf(err), detail: messageOf(err) } });
+      return /** @type {const} */ ({ ok: false, error: errorFrom(err) });
     } finally {
       loading = false;
     }

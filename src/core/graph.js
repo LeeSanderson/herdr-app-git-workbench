@@ -11,7 +11,7 @@ import { historyArgs, parseHistory, isHeadCommit, PAGE_SIZE } from "./history.js
 import { layoutLanes } from "./lanes.js";
 import { commitFilesArgs, parseCommitFiles } from "./commit-files.js";
 import { createSignal, coalesce } from "./signal.js";
-import { actionError, messageOf } from "./errors.js";
+import { actionError, errorFrom } from "./errors.js";
 import { repositoryId } from "./repository-key.js";
 import { pruneGraphSelection } from "./graph-keys.js";
 
@@ -131,7 +131,7 @@ export function createGraph({ git, key, status, settings }) {
       });
     } catch (err) {
       // GitNotFound / GitTimeout
-      set({ kind: "error", error: { summary: messageOf(err), detail: messageOf(err) } });
+      set({ kind: "error", error: errorFrom(err) });
     }
   }
 
@@ -160,7 +160,7 @@ export function createGraph({ git, key, status, settings }) {
         ? { kind: "ready", files: Object.freeze(parseCommitFiles(r.stdout)) }
         : { kind: "error", error: actionError(r.stderr, "git diff-tree failed") };
     } catch (err) {
-      next = { kind: "error", error: { summary: messageOf(err), detail: messageOf(err) } };
+      next = { kind: "error", error: errorFrom(err) };
     }
     if (disposed) return;
     files.set(commit.oid, Object.freeze(next));
