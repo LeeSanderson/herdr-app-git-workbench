@@ -2,7 +2,16 @@
 // Errors as values. A failed Git command becomes an ActionError: a one-line
 // summary for a band or status line, and the full text on demand.
 
-/** @typedef {{ summary: string, detail: string }} ActionError */
+/**
+ * A button on a failure's message that runs a sync, e.g. "Pull (rebase)" →
+ * `{ label: "Pull (rebase)", sync: "pull", options: { mode: "rebase" } }`. The
+ * panel runs it with `repository.sync(action.sync, action.options)`.
+ * @typedef {Readonly<{ label: string, sync: string, options?: Readonly<Record<string, unknown>> }>} ErrorAction
+ */
+/**
+ * `actions`, when present, are buttons the message offers (a sync failure's way out).
+ * @typedef {{ summary: string, detail: string, actions?: readonly ErrorAction[] }} ActionError
+ */
 
 /**
  * An ActionError from Git's output: the first non-blank line is the summary.

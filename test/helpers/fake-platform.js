@@ -51,7 +51,7 @@ export function fakePlatform() {
         },
       };
     },
-    sleep: () => new Promise((r) => sleepers.push(r)),
+    sleep: (ms) => new Promise((r) => sleepers.push(Object.assign(r, { ms }))),
   };
   return {
     platform,
@@ -59,6 +59,10 @@ export function fakePlatform() {
     /** Sleeps waiting to be woken. */
     get sleeping() {
       return sleepers.length;
+    },
+    /** The durations (ms) of the sleeps waiting to be woken. */
+    get sleeps() {
+      return sleepers.map((s) => s.ms);
     },
     /** Wakes every pending sleep, then lets the core run on. */
     async tick() {

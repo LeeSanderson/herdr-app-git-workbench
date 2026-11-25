@@ -42,10 +42,11 @@ export function createQueue() {
     subscribe: changes.subscribe,
 
     /**
-     * Runs `fn` after every entry added before it has finished.
+     * Runs `fn` after every entry added before it has finished. While it runs,
+     * `relabel(label)` changes the label `running` shows (e.g. a sync that waits long).
      * @template T
      * @param {{ label: string, timeoutClass: TimeoutClass }} entry
-     * @param {(entry: QueueEntry) => Promise<T>} fn
+     * @param {(entry: QueueEntry, relabel: (label: string) => void) => Promise<T>} fn
      * @returns {Promise<T>}
      */
     run(entry, fn) {
@@ -54,8 +55,15 @@ export function createQueue() {
       const result = tail.then(async () => {
         running = frozen;
         emit();
+        let current = frozen;
+        /** @param {string} label */
+        const relabel = (label) => {
+          if (running !== current) return; // this entry has finished
+          running = current = Object.freeze({ ...current, label });
+          emit();
+        };
         try {
-          return await fn(frozen);
+          return await fn(frozen, relabel);
         } finally {
           running = null;
           pending--;

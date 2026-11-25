@@ -12,6 +12,7 @@ import { messageOf } from "../core/errors.js";
 import { openDiff, MOD } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
 import { nextRegion } from "../core/graph-keys.js";
+import { syncButtons } from "../core/sync.js";
 import { GraphSection } from "./graph-section.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
@@ -398,11 +399,12 @@ export class SourceControlPanel {
         };
         return v_flex().flex_1().min_h(0)
           .when(snapshot.running !== null, (e) => e.child(runningStrip(t, snapshot.running.label)))
-          .when(snapshot.lastError !== null, (e) => e.child(this.errorStrip(t, snapshot.lastError)))
+          .when(snapshot.lastError !== null, (e) => e.child(this.errorStrip(t, snapshot.lastError, repository)))
           .when(snapshot.watchError !== null, (e) => e.child(watchBand(t, snapshot.watchError)))
           .child(this.graph.layout(t, repository.graph, v_flex().size_full()
             .child(changeLists(t, snapshot.groups, actions))
-            .child(this.commitBox(t, snapshot))));
+            .child(this.commitBox(t, snapshot)),
+          { buttons: syncButtons(snapshot), run: (name) => void repository.sync(name) }));
       }
       default:
         return div();
@@ -448,17 +450,22 @@ export class SourceControlPanel {
   }
 
   /**
-   * The last action's failure: its summary, and the full detail on demand.
-   * @param {Record<string, string>} t @param {{ summary: string, detail: string }} error
+   * The last action's failure: its summary, any actions it offers (each runs a
+   * sync), and the full detail on demand.
+   * @param {Record<string, string>} t @param {import("../core/errors.js").ActionError} error
+   * @param {import("../core/repository.js").Repository} repository
    */
-  errorStrip(t, error) {
+  errorStrip(t, error, repository) {
     if (this.shownError !== error) {
       this.shownError = error;
       this.showDetail = false;
     }
+    const busy = repository.snapshot?.running != null;
     const strip = band(t, t.ansi1).id("last-error").flex().flex_col().px(10).py(6).gap(4)
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().child(error.summary))
+        .children((error.actions ?? []).map((a, i) =>
+          button(t, `error-action-${i}`, a.label, () => void repository.sync(a.sync, { ...a.options }), busy)))
         .when(error.detail !== error.summary, (e) => e.child(
           div().id("error-detail-toggle").flex_none().cursor_pointer().text_color(t.muted)
             .hover((s) => s.text_color(t.foreground))
@@ -496,9 +503,10 @@ const pathsOf = (c) => (c.oldPath !== undefined ? [c.path, c.oldPath] : [c.path]
 
 /** The running command's label ("Staging…"); actions are disabled meanwhile. @param {Record<string, string>} t @param {string} label */
 function runningStrip(t, label) {
-  return h_flex().flex_none().h(24).px(10).items_center().text_size(11).text_color(t.muted)
+  return h_flex().flex_none().h(24).px(10).gap(6).items_center().text_size(11).text_color(t.muted)
     .bg(t.chrome).border_b_1().border_color(t.border)
-    .child(label);
+    .child(div().flex_none().frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80))
+    .child(div().flex_1().min_w(0).truncate().child(label));
 }
 
 /**

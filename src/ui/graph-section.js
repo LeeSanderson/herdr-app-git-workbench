@@ -18,11 +18,16 @@ import { statusColor, printable, iconButton } from "./widgets.js";
 /** @typedef {import("../core/graph.js").GraphState} GraphState */
 /** @typedef {import("../core/history.js").Commit} Commit */
 /** @typedef {import("../core/lanes.js").LaneRow} LaneRow */
+/**
+ * The toolbar's sync buttons and how to run one.
+ * @typedef {{ buttons: ReturnType<typeof import("../core/sync.js").syncButtons>, run(name: string): void }} SyncBar
+ */
 
 /** The divider's id: the window keeps the dragged sizes under it. */
 const SPLIT_ID = "scm-graph-split";
 const LIST_ID = "graph-rows";
 const HEADER_H = 28;
+const TOOLBAR_H = 28;
 const COMMIT_H = 40;
 const FILE_H = 22;
 const DETAIL_LINE_H = 16;
@@ -131,29 +136,46 @@ export class GraphSection {
    * The Change groups and commit box (`top`) above the Graph, split by a draggable
    * divider. The Graph starts at up to ⅔ of the viewport. Collapsed, the Graph is only
    * its header and there is no split. Starts the first load.
-   * @param {Record<string, string>} t @param {Graph} graph @param {any} top
+   * @param {Record<string, string>} t @param {Graph} graph @param {any} top @param {SyncBar} sync
    */
-  layout(t, graph, top) {
+  layout(t, graph, top, sync) {
     if (graph.state.kind === "idle") void graph.load();
-    const section = this.section(t, graph);
+    const section = this.section(t, graph, sync);
     if (this.collapsed) return v_flex().flex_1().min_h(0).child(top).child(section);
     const viewport = /** @type {any} */ (globalThis).window?.viewport_size?.();
     const height = viewport?.height ?? 900;
     const topPx = Math.max(160, Math.round(height / 3));
     return v_resizable(SPLIT_ID).flex_1().min_h(0)
       .child(resizable_panel().size(topPx).size_range(140).child(v_flex().size_full().child(top)))
-      .child(resizable_panel().size_range(HEADER_H + 60).child(section));
+      .child(resizable_panel().size_range(HEADER_H + TOOLBAR_H + 60).child(section));
   }
 
-  /** @param {Record<string, string>} t @param {Graph} graph */
-  section(t, graph) {
+  /** @param {Record<string, string>} t @param {Graph} graph @param {SyncBar} sync */
+  section(t, graph, sync) {
     const section = v_flex().id("graph").border_t_1().border_color(t.border)
       .track_focus(this.handle)
       .on_key_down((e, cx) => this.onKey(graph, e, cx))
       .on_mouse_down("left", () => this.handle.focus())
       .child(this.header(t, graph));
+    // Collapsed: only the header, so no sync buttons.
     if (this.collapsed) return section.flex_none();
-    return section.size_full().min_h(0).child(body(t, graph, this));
+    return section.size_full().min_h(0).child(this.toolbar(t, graph, sync)).child(body(t, graph, this));
+  }
+
+  /**
+   * Row 2 of the toolbar: Fetch, Pull ↓n, Push ↑n, then go to current and refresh.
+   * @param {Record<string, string>} t @param {Graph} graph @param {SyncBar} sync
+   */
+  toolbar(t, graph, sync) {
+    const { fetch, pull, push } = sync.buttons;
+    return h_flex().id("graph-toolbar").flex_none().h(TOOLBAR_H).px(6).gap(4).items_center()
+      .bg(t.chrome).border_b_1().border_color(t.border)
+      .child(syncButton(t, "graph-fetch", fetch, () => sync.run("fetch")))
+      .child(syncButton(t, "graph-pull", pull, () => sync.run("pull")))
+      .child(syncButton(t, "graph-push", push, () => sync.run("push")))
+      .child(div().flex_1())
+      .child(iconButton(t, "graph-current", "⌖", () => this.goToCurrent(graph)).tooltip("Go to current"))
+      .child(iconButton(t, "graph-refresh", "⟳", () => void graph.load()).tooltip("Reload the Graph"));
   }
 
   /** @param {Record<string, string>} t @param {Graph} graph */
@@ -169,10 +191,27 @@ export class GraphSection {
       .child(div().flex_none().text_size(12).font_semibold().child("Graph"))
       // A reload keeps the rows on screen; the spinner says one runs.
       .child(div().flex_1().when(graph.loading && graph.state.kind === "ready", (e) => e.child(spinner(t))))
-      .child(iconButton(t, "graph-current", "⌖", () => this.goToCurrent(graph)).tooltip("Go to current"))
-      .child(iconButton(t, "graph-refresh", "⟳", () => void graph.load()).tooltip("Reload the Graph"))
       .child(filterSwitch(t, graph));
   }
+}
+
+/**
+ * A sync button: accent when primary, inert while disabled.
+ * @param {Record<string, string>} t @param {string} id @param {import("../core/sync.js").SyncButton} button @param {() => void} onClick
+ */
+function syncButton(t, id, button, onClick) {
+  const primary = button.primary && button.enabled;
+  return h_flex().id(id).flex_none().h(20).px(8).items_center().rounded(4).text_size(11)
+    .bg(primary ? t.accent : t.raised)
+    .text_color(!button.enabled ? t.dim : primary ? t.accent_foreground : t.foreground)
+    .when(button.primary && !button.enabled, (e) => e.font_semibold())
+    .when(button.enabled, (e) => e.cursor_pointer().hover((s) => s.opacity(0.85))
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        onClick();
+        cx.notify();
+      }))
+    .child(button.label);
 }
 
 /** @type {[import("../core/graph.js").RefFilter, string][]} */
