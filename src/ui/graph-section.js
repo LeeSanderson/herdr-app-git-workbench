@@ -68,13 +68,13 @@ export class GraphSection {
 
   /** @param {Record<string, string>} t @param {Graph} graph */
   section(t, graph) {
-    const section = v_flex().id("graph").border_t_1().border_color(t.border).child(this.header(t));
+    const section = v_flex().id("graph").border_t_1().border_color(t.border).child(this.header(t, graph));
     if (this.collapsed) return section.flex_none();
     return section.size_full().min_h(0).child(body(t, graph));
   }
 
-  /** @param {Record<string, string>} t */
-  header(t) {
+  /** @param {Record<string, string>} t @param {Graph} graph */
+  header(t, graph) {
     return h_flex().id("graph-header").flex_none().h(HEADER_H).px(6).gap(6).items_center()
       .bg(t.chrome).border_b_1().border_color(t.border).cursor_pointer()
       .on_click((_e, cx) => {
@@ -83,8 +83,33 @@ export class GraphSection {
         cx.notify();
       })
       .child(div().flex_none().w(14).text_color(t.muted).child(this.collapsed ? "▸" : "▾"))
-      .child(div().flex_1().text_size(12).font_semibold().child("Graph"));
+      .child(div().flex_1().text_size(12).font_semibold().child("Graph"))
+      .child(filterSwitch(t, graph));
   }
+}
+
+/** @type {[import("../core/graph.js").RefFilter, string][]} */
+const FILTER_LABELS = [["auto", "Auto"], ["all", "All"], ["current", "Current"]];
+
+/**
+ * The Auto | All | Current segments. Choosing one remembers it for the Repository and reloads.
+ * @param {Record<string, string>} t @param {Graph} graph
+ */
+function filterSwitch(t, graph) {
+  const group = h_flex().flex_none().h(20).rounded(4).border_1().border_color(t.border).overflow_hidden().text_size(11);
+  for (const [mode, label] of FILTER_LABELS) {
+    const on = graph.filter === mode;
+    group.child(h_flex().id(`graph-filter-${mode}`).h_full().px(8).items_center()
+      .when(on, (e) => e.bg(t.raised).font_semibold())
+      .when(!on, (e) => e.text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover)))
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        if (!on) void graph.setFilter(mode);
+        cx.notify();
+      })
+      .child(label));
+  }
+  return group;
 }
 
 /** @param {Record<string, string>} t @param {Graph} graph */
@@ -148,12 +173,39 @@ function commitRow(t, c, row, isHead, now) {
   return h_flex().w_full().h(COMMIT_H).flex_none().items_center().gap(6).pr(8).overflow_hidden()
     .child(graphCell(t, row, COMMIT_H, isHead, merge))
     .child(v_flex().flex_1().min_w(0).gap(1)
-      .child(div().min_w(0).truncate().text_size(12).when(isHead, (e) => e.font_semibold()).child(c.subject || " "))
+      .child(h_flex().min_w(0).gap(4).items_center()
+        .children(badges(t, c.badges, laneColor(t, row.lane)))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).when(isHead, (e) => e.font_semibold()).child(c.subject || " ")))
       .child(h_flex().gap(6).text_size(11).text_color(t.dim)
         .child(div().flex_none().child(c.oid.slice(0, 7)))
         .child(div().flex_shrink(1).min_w(0).truncate().child(c.authorName))
         .child(div().flex_none().child(relativeTime(c.authorDate, now)))
         .when(merge, (e) => e.child(div().flex_none().text_color(t.muted).child("merge")))));
+}
+
+const MAX_BADGES = 3;
+const GLYPHS = { head: "◉", local: "⎇", remote: "☁", tag: "◆" };
+
+/**
+ * The Ref badges of a commit: at most 3, then a `+N` pill. None, no elements (so no gap).
+ * HEAD is outlined and bold, a local branch takes its lane's colour, a remote
+ * branch is muted and a tag is ansi yellow.
+ * @param {Record<string, string>} t @param {readonly import("../core/history.js").RefBadge[]} list @param {string} laneTint
+ */
+function badges(t, list, laneTint) {
+  const out = list.slice(0, MAX_BADGES).map((b) => {
+    const tint = b.kind === "head" ? t.foreground : b.kind === "local" ? laneTint : b.kind === "tag" ? t.ansi3 : t.muted;
+    return pill(t, tint, `${GLYPHS[b.kind]} ${b.name}`)
+      .when(b.kind === "head", (e) => e.border_color(tint).font_semibold());
+  });
+  if (list.length > MAX_BADGES) out.push(pill(t, t.muted, `+${list.length - MAX_BADGES}`));
+  return out;
+}
+
+/** @param {Record<string, string>} t @param {string} tint @param {string} text */
+function pill(t, tint, text) {
+  return div().flex_none().max_w(140).truncate().h(16).px(5).rounded(8).text_size(10)
+    .border_1().border_color(t.border).bg(t.raised).text_color(tint).child(text);
 }
 
 /**

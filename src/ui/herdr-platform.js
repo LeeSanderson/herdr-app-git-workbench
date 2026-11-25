@@ -7,7 +7,7 @@
 // `cx.timer.after` calls. The first copy's `init` starts it with `startHost(cx)`.
 // Sleeps requested before the host starts wait for it.
 
-import { exec, readTextFile, watchFolder, home, checking } from "herdr";
+import { exec, readTextFile, watchFolder, home, checking, shared, setShared } from "herdr";
 import os from "os";
 
 /** @type {{ ms: number, resolve: () => void }[]} */
@@ -68,6 +68,10 @@ export const herdrPlatform = {
   },
 
   readTextFile: (path, opts) => readTextFile(path, opts),
+
+  // Herdr's shared store is persisted, so a setting survives a reload of the mod.
+  getSetting: (key) => shared(key) ?? null,
+  setSetting: (key, value) => setShared(key, value),
 
   sleep(ms) {
     return new Promise((resolve) => {
