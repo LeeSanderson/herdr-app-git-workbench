@@ -26,26 +26,41 @@ function under(p, dir) {
   return fp.startsWith(fd + "/") ? p.slice(dir.length + 1) : null;
 }
 
-/** Files in the per-worktree git dir that change what the panel shows. */
-const GIT_DIR_ALLOW = /^(?:index|HEAD|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|rebase-[^/]+(?:\/.*)?)$/;
-/** Files in the common dir (shared by every worktree) that change what the panel shows. */
-const COMMON_DIR_ALLOW = /^(?:refs(?:\/.*)?|packed-refs)$/;
+/**
+ * What a relevant path changes: `worktree` (status only: working-tree files, the
+ * index, Operation markers) or `refs` (HEAD or a Ref moved: status and the Graph).
+ * @typedef {"worktree" | "refs"} WatchLabel
+ */
+
+/** Files in the per-worktree git dir that move HEAD or its per-worktree Refs. */
+const GIT_DIR_REFS = /^(?:HEAD|reftable(?:\/.*)?)$/;
+/** Other files in the per-worktree git dir that change what the panel shows. */
+const GIT_DIR_WORKTREE = /^(?:index|MERGE_HEAD|CHERRY_PICK_HEAD|REVERT_HEAD|rebase-[^/]+(?:\/.*)?)$/;
+/** Files in the common dir (shared by every worktree) that hold the Refs: loose, packed or reftable. */
+const COMMON_DIR_REFS = /^(?:refs(?:\/.*)?|packed-refs|reftable(?:\/.*)?)$/;
 
 /**
- * Whether a changed path should refresh the Repository. Working-tree changes do;
- * inside the git dirs only the allowlisted files do (lock files, objects, logs and
- * other worktrees' dirs don't).
+ * Whether a changed path should refresh the Repository, and how: `refs` paths
+ * also reload the Graph. Working-tree changes are `worktree`; inside the git dirs
+ * only the allowlisted files count. Lock files (Git renames `<name>.lock` into
+ * place, which reports the real name), objects, logs and other worktrees' dirs
+ * are null.
  * @param {string} changed
  * @param {RepositoryDirs} dirs
+ * @returns {WatchLabel | null}
  */
-export function isRelevant(changed, { root, gitDir, commonDir }) {
+export function watchLabel(changed, { root, gitDir, commonDir }) {
   const p = norm(changed);
   const inGit = under(p, norm(gitDir));
   const inCommon = under(p, norm(commonDir));
   if (inGit !== null || inCommon !== null) {
-    return (inGit !== null && GIT_DIR_ALLOW.test(inGit)) || (inCommon !== null && COMMON_DIR_ALLOW.test(inCommon));
+    if (p.endsWith(".lock")) return null;
+    if (inGit !== null && GIT_DIR_REFS.test(inGit)) return "refs";
+    if (inCommon !== null && COMMON_DIR_REFS.test(inCommon)) return "refs";
+    if (inGit !== null && GIT_DIR_WORKTREE.test(inGit)) return "worktree";
+    return null;
   }
-  return under(p, norm(root)) !== null;
+  return under(p, norm(root)) !== null ? "worktree" : null;
 }
 
 /**

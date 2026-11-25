@@ -3,7 +3,7 @@
 // Created and owned by the Workbench.
 
 import { parseStatus } from "./status.js";
-import { isRelevant, watchRoots } from "./watch-filter.js";
+import { watchLabel, watchRoots } from "./watch-filter.js";
 import { repositoryKey, repositoryId } from "./repository-key.js";
 import { actionError, messageOf } from "./errors.js";
 import { createSignal, coalesce } from "./signal.js";
@@ -136,11 +136,16 @@ export function createRepository({ git, key, queue, platform, dirs }) {
   /** A refresh requested while one runs merges into a single follow-up. */
   const refresh = coalesce(readStatus);
 
-  // Debounce: refresh once relevant events have been quiet for DEBOUNCE_MS.
+  // Debounce: refresh once relevant events have been quiet for DEBOUNCE_MS. A
+  // batch with a `refs` path in the quiet period also reloads a loaded Graph,
+  // after the status read (Auto's revisions depend on the Upstream).
   let eventSeq = 0;
   let debouncing = false;
-  async function schedule() {
+  let refsMoved = false;
+  /** @param {boolean} refs */
+  async function schedule(refs) {
     eventSeq++;
+    refsMoved ||= refs;
     if (debouncing) return;
     debouncing = true;
     try {
@@ -152,7 +157,11 @@ export function createRepository({ git, key, queue, platform, dirs }) {
     } finally {
       debouncing = false;
     }
-    if (!disposed) refresh().catch(() => {});
+    if (disposed) return;
+    const reloadGraph = refsMoved;
+    refsMoved = false;
+    await refresh().catch(() => {});
+    if (reloadGraph && graph.started && !disposed) await graph.load();
   }
 
   /** @type {import("./platform.js").Watch[]} */
@@ -163,7 +172,8 @@ export function createRepository({ git, key, queue, platform, dirs }) {
     (async () => {
       for await (const batch of w.events) {
         if (disposed) return;
-        if (batch.some((p) => isRelevant(p, dirs))) schedule();
+        const labels = batch.map((p) => watchLabel(p, dirs));
+        if (labels.some(Boolean)) void schedule(labels.includes("refs"));
       }
     })().catch((err) => {
       // The watch stopped (e.g. Herdr's 64-folder limit). Say so; refreshes

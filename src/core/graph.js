@@ -87,8 +87,10 @@ export function createGraph({ git, key, status, settings }) {
   let filter = REF_FILTERS.find((f) => f === saved) ?? "auto";
   let disposed = false;
   const changes = createSignal();
+  /** Commits to load: the first page, plus one page per Load more. Every load, reloads too, asks for this many. */
+  let count = PAGE_SIZE;
 
-  /** Oids of expanded commits. Kept across loads; an oid no longer shown just doesn't render. */
+  /** Oids of expanded commits. Kept across loads; a load drops the oids it no longer shows. */
   let expanded = /** @type {ReadonlySet<string>} */ (Object.freeze(new Set()));
   /** A commit's files by oid. Ready lists are kept for good (commits are immutable). @type {Map<string, CommitFiles>} */
   const files = new Map();
@@ -109,14 +111,16 @@ export function createGraph({ git, key, status, settings }) {
     const revs = filterRevisions(filter, status());
     if (!revs.length) return set({ kind: "empty" });
     if (state.kind === "idle" || state.kind === "empty") set({ kind: "loading" });
-    const count = PAGE_SIZE;
     try {
       // One more than shown says whether history goes on.
-      const r = await git.run(key.machine, historyArgs(revs, count + 1), { cwd: key.toplevel, read: true });
+      const r = await git.run(key.machine, historyArgs(revs, count + 1), { cwd: key.toplevel, read: true, timeoutClass: "graph" });
       if (!r.ok) return set({ kind: "error", error: actionError(r.stderr, "git log failed") });
       const all = parseHistory(r.stdout);
       const commits = all.slice(0, count);
       if (!commits.length) return set({ kind: "empty" });
+      // Expanded commits that are gone (an amend, a rewrite) drop quietly.
+      const oids = new Set(commits.map((c) => c.oid));
+      if ([...expanded].some((oid) => !oids.has(oid))) expanded = Object.freeze(new Set([...expanded].filter((oid) => oids.has(oid))));
       set({
         kind: "ready",
         commits,
@@ -166,7 +170,18 @@ export function createGraph({ git, key, status, settings }) {
   /** The shown commit with this oid, if any. @param {string} oid */
   const shown = (oid) => (state.kind === "ready" ? state.commits.find((c) => c.oid === oid) : undefined);
 
-  const load = coalesce(read);
+  // Runs one load at a time; calls meanwhile merge into one follow-up, which reads
+  // the filter and count current when it starts. So loads apply in the order
+  // asked and the latest request always lands last.
+  const serial = coalesce(read);
+  /** Load calls not yet settled; the Graph is loading while any are. */
+  let pending = 0;
+  function load() {
+    if (pending++ === 0) changes.emit();
+    return serial().finally(() => {
+      if (--pending === 0 && !disposed) changes.emit();
+    });
+  }
 
   return {
     /** The Repository's key, for the Diff targets of commit files. */
@@ -187,6 +202,18 @@ export function createGraph({ git, key, status, settings }) {
      */
     load,
 
+    /**
+     * Loads 50 more commits than are shown: the same query at the larger count,
+     * replacing the snapshot (topological order keeps the rows already shown in
+     * place). Asking again before it lands asks for the same count, not 50 more.
+     * @returns {Promise<void>}
+     */
+    loadMore() {
+      const shown = state.kind === "ready" ? state.count : PAGE_SIZE;
+      count = Math.max(count, shown + PAGE_SIZE);
+      return load();
+    },
+
     /** The Ref filter, remembered per Repository (Auto until chosen). @returns {RefFilter} */
     get filter() {
       return filter;
@@ -202,6 +229,11 @@ export function createGraph({ git, key, status, settings }) {
       settings.setSetting(refFilterSetting(key), next);
       changes.emit();
       return load();
+    },
+
+    /** True while a load runs, a reload too (which keeps the previous state until it lands). */
+    get loading() {
+      return pending > 0;
     },
 
     /** True once loaded at least once (whatever the outcome), so reloads are worth running. */
