@@ -3,12 +3,6 @@
   "focusable": true,
   "palette": [
     {
-      "title": "Git Workbench: Toggle Source Control",
-      "command": "layout.toggle",
-      "args": { "id": "git-workbench" },
-      "words": "git source control changes stage commit diff"
-    },
-    {
       "title": "Git Workbench: Open Source Control beside this pane",
       "command": "pane.split",
       "args": { "direction": "right", "mod": "herdr-app-git-workbench" },

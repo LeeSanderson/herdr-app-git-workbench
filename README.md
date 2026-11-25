@@ -4,9 +4,10 @@ Git source control and a visual diff for [Herdr Desktop](https://herdr.dev).
 
 ![Git Workbench](preview.png)
 
-- **Source Control panel:** a column beside your terminals, shown and hidden from
-  the command palette (`Ctrl+Shift+P`, "Git Workbench: Toggle Source Control"). It
-  follows the active space's repository and shows the branch,
+- **Source Control panel:** opened beside your terminals from the command palette
+  (`Ctrl+Shift+P`, "Git Workbench: Open Source Control beside this pane"), or kept
+  as a column in a personal layout. It follows the active space's repository and
+  shows the branch,
   its upstream and ahead/behind counts, any merge, rebase, cherry-pick or revert in
   progress, and your changes in two lists: Unstaged (Conflicts, Changes, Untracked)
   and Staged. Tick a row to stage or unstage it. Hover a row and click 🗑 to discard
@@ -33,10 +34,11 @@ does not reach the network.
 These steps work for a person or an agent. They keep your own layout and keys.
 Steps 2 and 3 change Herdr's state, so an agent asks before each one.
 
-The mod adds its own entries to Herdr's command palette and needs no change to
-`keys.json`. The one piece of app configuration it needs is the layout column
-(steps 2 and 3), because Herdr's shipped layouts are read-only. Skip those steps
-to use it as a pane instead (see the [fallback](#fallback-keep-the-shipped-layout)).
+Step 1 is all the mod needs: it adds its own entry to Herdr's command palette and
+needs no change to `keys.json`. Steps 2 and 3 are optional. They give the panel a
+column of its own, which needs a personal layout because Herdr's shipped layouts
+are read-only. Without them, open it as a pane (see the
+[fallback](#fallback-keep-the-shipped-layout)).
 
 ### 1. Copy the mod in as a real folder
 
@@ -58,14 +60,15 @@ herdr-app check ~/.config/herdr-app/mods/herdr-app-git-workbench
 ```
 
 `mod.json` has `"place": "none"`: Herdr does not dock the panel anywhere by
-itself. Steps 2 and 3 put it in your layout. Its `"palette"` entries add two
-commands to the command palette (`Ctrl+Shift+P`):
+itself. Its `"palette"` entry adds **Git Workbench: Open Source Control beside
+this pane** to the command palette (`Ctrl+Shift+P`), which opens the panel as a
+pane on any layout (`pane.split`).
 
-- **Git Workbench: Toggle Source Control** shows or hides the `git-workbench`
-  column (`layout.toggle {id: "git-workbench"}`). It does nothing on a layout
-  without that column.
-- **Git Workbench: Open Source Control beside this pane** opens the panel as a
-  pane on any layout (`pane.split`).
+There is no palette entry to toggle the layout column: a palette entry cannot
+check whether the shown layout has that column, and on a layout without it
+`layout.toggle` fails with "no node". With the column, use the panel's ✕ and a
+key you bind yourself (see
+[Optional: a key to toggle the panel](#optional-a-key-to-toggle-the-panel)).
 
 ### 2. Use a personal layout
 
@@ -116,16 +119,22 @@ Read the personal layout, `~/.config/herdr-app/layouts/<name>.json`.
    herdr-app do layout.set '{"layout": <the edited tree>}'
    ```
 
-The column starts hidden. The id `git-workbench` is what the palette's **Toggle
-Source Control** and the panel's ✕ button toggle, so keep it exactly.
+The column starts hidden. The id `git-workbench` is what `layout.toggle` and the
+panel's ✕ button use, so keep it exactly.
 
-Open the command palette (`Ctrl+Shift+P`) and run **Git Workbench: Toggle Source
-Control**. The Source Control panel appears beside your terminals.
+Show it once to check it:
+
+```sh
+herdr-app do layout.toggle '{"id":"git-workbench"}'
+```
+
+The Source Control panel appears beside your terminals. To show and hide it from
+the keyboard, bind a key (next section).
 
 ### Optional: a key to toggle the panel
 
-The mod binds no keys. If you want one, add it to `~/.config/herdr-app/keys.json`
-yourself, for example:
+For a layout with the `git-workbench` column. The mod binds no keys. If you want
+one, add it to `~/.config/herdr-app/keys.json` yourself, for example:
 
 ```json
 { "global": { "ctrl-shift-g": "layout.toggle:git-workbench" } }
@@ -158,12 +167,12 @@ close it).
 
 Delete the mod folder, remove the `git-workbench` node from your layout (or switch
 back with `Ctrl+Shift+L` and delete the clone's file), and remove any key you
-bound to it in `keys.json`. The palette entries go with the mod folder.
+bound to it in `keys.json`. The palette entry goes with the mod folder.
 
 ## Keys
 
-The mod binds no global keys. Show and hide the panel from the command palette, or
-bind `layout.toggle:git-workbench` yourself (see
+The mod binds no global keys. Open the panel from the command palette. With the
+layout column, bind `layout.toggle:git-workbench` yourself (see
 [Optional: a key to toggle the panel](#optional-a-key-to-toggle-the-panel)).
 
 ### Source Control panel

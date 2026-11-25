@@ -10,7 +10,8 @@ and a commit box. Clicking a change opens a side-by-side (or inline) diff.
 ## What you see
 
 - **Source Control panel:** a 340 px column (min 280, max 900) to the right of
-  Herdr's Files/Changes panel, hidden until shown from the command palette. Top to bottom:
+  Herdr's Files/Changes panel (hidden until toggled), or a pane opened from the
+  command palette. Top to bottom:
   - Top bar: `⎇ branch → upstream`, an `↑a ↓b` pill when there is an upstream, an
     operation badge (Merging, Rebasing, Cherry-picking, Reverting), then ⟳ (refresh)
     and ✕ (hide). A detached HEAD shows "detached HEAD" in `ansi3` and the short oid.
@@ -79,10 +80,10 @@ and a commit box. Clicking a change opens a side-by-side (or inline) diff.
   `%LOCALAPPDATA%\Programs\Git\cmd\git.exe`.
 - **Layout block** (in a personal clone of `main`, `work-body` row, after `panel`):
   `{"id":"git-workbench","type":"block","hidden":true,"size":{"px":340},"min":280,"max":900,"content":{"mod":"herdr-app-git-workbench"}}`
-- **`mod.json`:** `"place": "none"`, `"focusable": true`, and two `"palette"`
-  entries: "Git Workbench: Toggle Source Control" (`layout.toggle {id:
-  "git-workbench"}`) and "Git Workbench: Open Source Control beside this pane"
-  (`pane.split {direction: "right", mod: "herdr-app-git-workbench"}`).
+- **`mod.json`:** `"place": "none"`, `"focusable": true`, and one `"palette"`
+  entry: "Git Workbench: Open Source Control beside this pane" (`pane.split
+  {direction: "right", mod: "herdr-app-git-workbench"}`). No toggle entry: on a
+  layout without the column, `layout.toggle` fails with "no node".
 - **No `keys.json`:** the mod binds no keys; a toggle key is the person's choice.
 
 ## Install
@@ -116,8 +117,9 @@ it does not reach the network.
 ## Done when
 
 - `npm test` passes and `herdr-app check` on the mod folder reports no errors.
-- The palette's "Git Workbench: Toggle Source Control" shows and hides the panel;
-  ✕ hides it.
+- The palette's "Git Workbench: Open Source Control beside this pane" opens the
+  panel as a pane; with the layout column, `layout.toggle {id: "git-workbench"}`
+  shows and hides it and ✕ hides it.
 - In a repository with a modified, an untracked and a staged file, each is in the
   right list; ticking moves it between Unstaged and Staged, and `git status` agrees.
 - Clicking a modified file opens a `Δ <file>` tab with tints and intra-line detail;
