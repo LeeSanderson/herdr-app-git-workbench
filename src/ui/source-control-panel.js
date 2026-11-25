@@ -11,6 +11,7 @@ import { isDiscardable, unstagedChanges, folderOf, nameOf } from "../core/status
 import { messageOf } from "../core/errors.js";
 import { openDiff, MOD } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
+import { nextRegion } from "../core/graph-keys.js";
 import { GraphSection } from "./graph-section.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
@@ -65,7 +66,7 @@ export class SourceControlPanel {
     this.pendingDiscard = null;
     this.handle = cx.focus_handle();
     /** The Graph below the Change groups (its own module). */
-    this.graph = new GraphSection();
+    this.graph = new GraphSection(cx, (region) => this.focusRegion(region));
     /** What the last render saw of focus: the active space, window and panel focus. */
     this.seenFocus = { space: /** @type {string | null} */ (null), window: false, panel: false };
     /** The commit message box. Typing re-renders so the status line follows the message. */
@@ -258,24 +259,37 @@ export class SourceControlPanel {
   }
 
   /**
+   * Moves the keyboard to a part of the panel: the Change list, the commit box or the Graph.
+   * @param {import("../core/graph-keys.js").FocusRegion} region
+   */
+  focusRegion(region) {
+    if (!this.current()) return;
+    if (region === "commit-box") this.message.focus();
+    else if (region === "graph") this.graph.focus();
+    else this.handle.focus();
+  }
+
+  /**
    * The list keys: Up/Down select, Space stages/unstages (or marks a Conflict resolved),
-   * Enter opens the Diff view, Delete asks to discard, Tab goes to the commit box.
-   * Off while the commit box has the keyboard.
+   * Enter opens the Diff view, Delete asks to discard, Tab goes to the commit box and
+   * Shift+Tab to the Graph. Off while the commit box has the keyboard.
    * @param {import("gpui-kit").KeyEvent} e @param {import("gpui-kit").Context} cx
    */
   onListKey(e, cx) {
     if (this.typing || !this.handle.is_focused()) return;
+    const region = nextRegion("list", e.keystroke);
+    if (region) {
+      cx.stop_propagation();
+      this.focusRegion(region);
+      return;
+    }
     const cur = this.current();
     const rows = cur ? listRows(cur.snapshot.groups) : [];
     const selection = settleSelection(rows, this.selection);
     const row = selection ? rows[selection.index] : null;
     const action = listKeyAction(e.keystroke, row?.change ?? null);
-    if (!action) return;
+    if (!action || action === "commit-box") return;
     cx.stop_propagation();
-    if (action === "commit-box") {
-      if (cur) this.message.focus();
-      return;
-    }
     if (action === "up" || action === "down") {
       this.selection = moveSelection(rows, selection, action === "up" ? -1 : 1);
       cx.notify();
@@ -405,10 +419,18 @@ export class SourceControlPanel {
     const enabled = ready && snapshot.running === null;
     return v_flex().id("commit-box").flex_none().p(10).gap(6).border_t_1().border_color(t.border).bg(t.chrome)
       // Fallback for Ctrl+Enter in case the textarea doesn't report it as a secondary submit.
+      // Tab goes on to the Graph, Shift+Tab back to the Change list.
       .on_key_down((e, cx) => {
         if (e.keystroke === "ctrl-enter" || e.keystroke === "cmd-enter") {
           cx.stop_propagation();
           this.commit();
+          return;
+        }
+        const region = nextRegion("commit-box", e.keystroke);
+        if (region) {
+          cx.stop_propagation();
+          this.focusRegion(region);
+          cx.notify();
         }
       })
       .child(Textarea.new(this.message))

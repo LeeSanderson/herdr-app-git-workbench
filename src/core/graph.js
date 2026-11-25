@@ -13,11 +13,13 @@ import { commitFilesArgs, parseCommitFiles } from "./commit-files.js";
 import { createSignal, coalesce } from "./signal.js";
 import { actionError, messageOf } from "./errors.js";
 import { repositoryId } from "./repository-key.js";
+import { pruneGraphSelection } from "./graph-keys.js";
 
 /** @typedef {import("./history.js").Commit} Commit */
 /** @typedef {import("./lanes.js").LaneRow} LaneRow */
 /** @typedef {import("./errors.js").ActionError} ActionError */
 /** @typedef {import("./commit-files.js").CommitFile} CommitFile */
+/** @typedef {import("./graph-keys.js").GraphSelection} GraphSelection */
 /**
  * One commit's changed files, as fetched on its first expand.
  * @typedef {Readonly<{ kind: "loading" }
@@ -91,10 +93,15 @@ export function createGraph({ git, key, status, settings }) {
   /** A commit's files by oid. Ready lists are kept for good (commits are immutable). @type {Map<string, CommitFiles>} */
   const files = new Map();
 
+  /** The selected row (keyboard, ⌖), by oid plus path. @type {GraphSelection | null} */
+  let selection = null;
+
   /** @param {GraphState} next */
   function set(next) {
     if (disposed) return;
     state = Object.freeze(next);
+    // A reload drops a selected commit that is no longer shown.
+    if (next.kind === "ready") selection = pruneGraphSelection(selection, next.commits);
     changes.emit();
   }
 
@@ -236,6 +243,18 @@ export function createGraph({ git, key, status, settings }) {
     async toggle(oid) {
       if (expanded.has(oid)) this.collapse(oid);
       else await this.expand(oid);
+    },
+
+    /** The selected commit or file row, or null. @returns {GraphSelection | null} */
+    get selection() {
+      return selection;
+    },
+
+    /** Selects a row (or nothing). @param {GraphSelection | null} next */
+    select(next) {
+      if (disposed) return;
+      selection = next && Object.freeze({ oid: next.oid, path: next.path });
+      changes.emit();
     },
 
     /**

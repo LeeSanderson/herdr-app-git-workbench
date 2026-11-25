@@ -4,13 +4,14 @@
 // below the Change groups behind a draggable divider.
 
 import { div, PathBuilder } from "gpui-kit";
-import { v_flex, h_flex, v_virtual_list, v_resizable, resizable_panel, Scrollbar } from "gpui-base";
+import { v_flex, h_flex, v_virtual_list, v_resizable, resizable_panel, Scrollbar, VirtualListScrollHandle } from "gpui-base";
 import { rowWidth } from "../core/lanes.js";
 import { graphItems } from "../core/graph-items.js";
+import { graphKeyAction, moveGraphSelection, selectedItem, currentRow, nextRegion } from "../core/graph-keys.js";
 import { commitFileTarget } from "../core/diff-target.js";
 import { folderOf, nameOf } from "../core/status.js";
 import { openDiff } from "./diff-tabs.js";
-import { statusColor, printable } from "./widgets.js";
+import { statusColor, printable, iconButton } from "./widgets.js";
 
 /** @typedef {import("../core/graph-items.js").GraphItem} GraphItem */
 /** @typedef {import("../core/graph.js").Graph} Graph */
@@ -53,9 +54,77 @@ export function relativeTime(iso, now) {
   return `${n} ${name}${plural} ago`;
 }
 
+/** The visible rows of a ready Graph. @param {Graph} graph @param {Extract<GraphState, { kind: "ready" }>} state */
+const itemsOf = (graph, state) => graphItems(state.commits, graph.expanded, (oid) => graph.files(oid));
+
 export class GraphSection {
-  constructor() {
+  /**
+   * @param {import("gpui-kit").Context} cx
+   * @param {(region: import("../core/graph-keys.js").FocusRegion) => void} focusRegion
+   *   moves the keyboard to another part of the panel (Tab, Shift+Tab).
+   */
+  constructor(cx, focusRegion) {
     this.collapsed = false;
+    /** The Graph's own focus region. */
+    this.handle = cx.focus_handle();
+    this.scroll = VirtualListScrollHandle.new();
+    this.focusRegion = focusRegion;
+  }
+
+  /** Moves the keyboard onto the Graph. */
+  focus() {
+    this.handle.focus();
+  }
+
+  /**
+   * Go to current: selects the HEAD commit, scrolls it into view and gives the Graph the keyboard.
+   * @param {Graph} graph
+   */
+  goToCurrent(graph) {
+    const state = graph.state;
+    if (state.kind !== "ready") return;
+    const row = currentRow(itemsOf(graph, state), state.head);
+    if (!row) return;
+    this.collapsed = false;
+    graph.select(row.selection);
+    this.scroll.scroll_to_item(row.index, "center");
+    this.handle.focus();
+  }
+
+  /**
+   * The Graph's keys while it has the keyboard: Tab and Shift+Tab leave it, Up/Down
+   * select, Right/Space expand, Left collapses or goes up to the commit, Enter
+   * toggles a commit or opens a file's Diff view.
+   * @param {Graph} graph @param {import("gpui-kit").KeyEvent} e @param {import("gpui-kit").Context} cx
+   */
+  onKey(graph, e, cx) {
+    if (!this.handle.is_focused()) return;
+    const region = nextRegion("graph", e.keystroke);
+    if (region) {
+      cx.stop_propagation();
+      this.focusRegion(region);
+      cx.notify();
+      return;
+    }
+    const state = graph.state;
+    if (state.kind !== "ready" || this.collapsed) return;
+    const items = itemsOf(graph, state);
+    const item = selectedItem(items, graph.selection);
+    const action = graphKeyAction(e.keystroke, item);
+    if (!action) return;
+    cx.stop_propagation();
+    if (action === "up" || action === "down") {
+      const next = moveGraphSelection(items, graph.selection, action === "up" ? -1 : 1);
+      graph.select(next);
+      const moved = selectedItem(items, next);
+      if (moved) this.scroll.scroll_to_item(items.indexOf(moved));
+    } else if (!item) return;
+    else if (action === "expand") void graph.expand(item.oid);
+    else if (action === "collapse") graph.collapse(item.oid);
+    else if (action === "parent") graph.select({ oid: item.oid, path: null });
+    else if (action === "toggle") void graph.toggle(item.oid);
+    else if (action === "open" && item.kind === "file") openDiff(commitFileTarget(graph.key, state.commits[item.index], item.file));
+    cx.notify();
   }
 
   /**
@@ -78,9 +147,13 @@ export class GraphSection {
 
   /** @param {Record<string, string>} t @param {Graph} graph */
   section(t, graph) {
-    const section = v_flex().id("graph").border_t_1().border_color(t.border).child(this.header(t, graph));
+    const section = v_flex().id("graph").border_t_1().border_color(t.border)
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => this.onKey(graph, e, cx))
+      .on_mouse_down("left", () => this.handle.focus())
+      .child(this.header(t, graph));
     if (this.collapsed) return section.flex_none();
-    return section.size_full().min_h(0).child(body(t, graph));
+    return section.size_full().min_h(0).child(body(t, graph, this));
   }
 
   /** @param {Record<string, string>} t @param {Graph} graph */
@@ -94,6 +167,7 @@ export class GraphSection {
       })
       .child(div().flex_none().w(14).text_color(t.muted).child(this.collapsed ? "▸" : "▾"))
       .child(div().flex_1().text_size(12).font_semibold().child("Graph"))
+      .child(iconButton(t, "graph-current", "⌖", () => this.goToCurrent(graph)).tooltip("Go to current"))
       .child(filterSwitch(t, graph));
   }
 }
@@ -122,8 +196,8 @@ function filterSwitch(t, graph) {
   return group;
 }
 
-/** @param {Record<string, string>} t @param {Graph} graph */
-function body(t, graph) {
+/** @param {Record<string, string>} t @param {Graph} graph @param {GraphSection} section */
+function body(t, graph, section) {
   const state = graph.state;
   switch (state.kind) {
     case "idle":
@@ -145,7 +219,7 @@ function body(t, graph) {
           })
           .child("Retry")));
     case "ready":
-      return list(t, graph, state);
+      return list(t, graph, state, section);
   }
 }
 
@@ -157,12 +231,15 @@ function note(t, content) {
 /**
  * The commit rows in a virtual list, with the detail block and file rows of each
  * expanded commit. Rows hold no handlers or state: clicks are handled here, by key.
+ * The selected row is highlighted; a click selects it and gives the Graph the keyboard.
  * @param {Record<string, string>} t @param {Graph} graph @param {Extract<GraphState, { kind: "ready" }>} state
+ * @param {GraphSection} section
  */
-function list(t, graph, state) {
+function list(t, graph, state, section) {
   const { commits, rows, head } = state;
   const now = Date.now();
-  const items = graphItems(commits, graph.expanded, (oid) => graph.files(oid));
+  const items = itemsOf(graph, state);
+  const selectedKey = selectedItem(items, graph.selection)?.key ?? null;
   const sizes = items.map((it) => itemHeight(it, commits[it.index]));
   /** @type {Map<string, GraphItem>} */
   const byKey = new Map(items.map((it) => [it.key, it]));
@@ -173,18 +250,26 @@ function list(t, graph, state) {
         const it = items[i];
         const c = commits[it.index];
         const row = rows[it.index];
-        if (it.kind === "commit") out.push(commitRow(t, c, row, c.oid === head, now, graph.isExpanded(c.oid)));
-        else out.push(innerRow(t, it, c, row, sizes[i]));
+        const selected = it.key === selectedKey;
+        if (it.kind === "commit") out.push(commitRow(t, c, row, c.oid === head, now, graph.isExpanded(c.oid), selected));
+        else out.push(innerRow(t, it, c, row, sizes[i], selected));
       }
       return out;
     })
     .on_item_click((key, cx) => {
       const it = byKey.get(key);
       if (!it) return;
-      if (it.kind === "commit") void graph.toggle(it.oid);
-      else if (it.kind === "file") openDiff(commitFileTarget(graph.key, commits[it.index], it.file));
+      section.focus();
+      if (it.kind === "commit") {
+        graph.select({ oid: it.oid, path: null });
+        void graph.toggle(it.oid);
+      } else if (it.kind === "file") {
+        graph.select({ oid: it.oid, path: it.file.path });
+        openDiff(commitFileTarget(graph.key, commits[it.index], it.file));
+      }
       cx.notify();
     })
+    .track_scroll(section.scroll)
     .size_full();
   return div().flex_1().min_h(0).relative()
     .child(vl)
@@ -215,10 +300,10 @@ const absoluteDate = (iso) => iso.replace("T", " ").replace(/([+-]\d\d:\d\d|Z)$/
  * A row under an expanded commit: its detail block, a file, or the files' loading
  * or error status. The commit's lanes carry on through it.
  * @param {Record<string, string>} t @param {Exclude<GraphItem, { kind: "commit" }>} it @param {Commit} c
- * @param {LaneRow} row @param {number} h
+ * @param {LaneRow} row @param {number} h @param {boolean} selected
  */
-function innerRow(t, it, c, row, h) {
-  const base = h_flex().w_full().h(h).flex_none().gap(6).pr(8).overflow_hidden().bg(t.chrome)
+function innerRow(t, it, c, row, h, selected) {
+  const base = h_flex().w_full().h(h).flex_none().gap(6).pr(8).overflow_hidden().bg(selected ? t.selected : t.chrome)
     .child(passThroughCell(t, row, h));
   if (it.kind === "detail") {
     const parents = c.parents.length;
@@ -277,11 +362,12 @@ function passThroughCell(t, row, h) {
  * One commit: the graph cell, then the subject (bold for HEAD) over the short oid,
  * author, relative date and a `merge` marker.
  * @param {Record<string, string>} t @param {Commit} c @param {LaneRow} row @param {boolean} isHead @param {number} now
- * @param {boolean} expanded
+ * @param {boolean} expanded @param {boolean} selected
  */
-function commitRow(t, c, row, isHead, now, expanded) {
+function commitRow(t, c, row, isHead, now, expanded, selected) {
   const merge = c.parents.length > 1;
   return h_flex().w_full().h(COMMIT_H).flex_none().items_center().gap(6).pr(8).overflow_hidden().cursor_pointer()
+    .when(selected, (e) => e.bg(t.selected))
     .child(graphCell(t, row, COMMIT_H, isHead, merge))
     .child(div().flex_none().w(10).text_size(10).text_color(t.muted).child(expanded ? "▾" : "▸"))
     .child(v_flex().flex_1().min_w(0).gap(1)
