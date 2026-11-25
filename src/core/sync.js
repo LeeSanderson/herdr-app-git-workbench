@@ -163,7 +163,8 @@ async function publish(ctx, branch) {
 /**
  * Failure classes, recognised by Git's error text (stderr and stdout together),
  * checked in order. Git can be localised: unmatched text falls back to Git's own
- * first line. Text from git 2.45.2, see docs/research/graph-sync-exec.md §4.
+ * first line. Text from git 2.45.2, see §4 of docs/research/graph-sync-exec.md on the
+ * `research/graph-sync-exec` branch (not merged into main).
  * `files`, when present, counts the files the failure names.
  * @type {{ kind: string, match: RegExp[], files?: (output: string) => number | undefined }[]}
  */
