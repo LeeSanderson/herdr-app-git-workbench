@@ -166,8 +166,11 @@ export class GraphSection {
         cx.notify();
       })
       .child(div().flex_none().w(14).text_color(t.muted).child(this.collapsed ? "▸" : "▾"))
-      .child(div().flex_1().text_size(12).font_semibold().child("Graph"))
+      .child(div().flex_none().text_size(12).font_semibold().child("Graph"))
+      // A reload keeps the rows on screen; the spinner says one runs.
+      .child(div().flex_1().when(graph.loading && graph.state.kind === "ready", (e) => e.child(spinner(t))))
       .child(iconButton(t, "graph-current", "⌖", () => this.goToCurrent(graph)).tooltip("Go to current"))
+      .child(iconButton(t, "graph-refresh", "⟳", () => void graph.load()).tooltip("Reload the Graph"))
       .child(filterSwitch(t, graph));
   }
 }
@@ -202,9 +205,7 @@ function body(t, graph, section) {
   switch (state.kind) {
     case "idle":
     case "loading":
-      return note(t, h_flex().gap(6)
-        .child(div().text_color(t.muted).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80))
-        .child("Loading history…"));
+      return note(t, h_flex().gap(6).child(spinner(t)).child("Loading history…"));
     case "empty":
       return note(t, "No commits yet");
     case "error":
@@ -222,6 +223,9 @@ function body(t, graph, section) {
       return list(t, graph, state, section);
   }
 }
+
+/** @param {Record<string, string>} t */
+const spinner = (t) => div().text_color(t.muted).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80);
 
 /** @param {Record<string, string>} t @param {any} content */
 function note(t, content) {
@@ -243,10 +247,18 @@ function list(t, graph, state, section) {
   const sizes = items.map((it) => itemHeight(it, commits[it.index]));
   /** @type {Map<string, GraphItem>} */
   const byKey = new Map(items.map((it) => [it.key, it]));
-  const vl = v_virtual_list(LIST_ID, items.length, sizes, (i) => items[i].key,
+  // A final "Load more…" row while history goes on, after every Graph item (so
+  // the item indexes the key logic scrolls to are unchanged).
+  const count = items.length + (state.hasMore ? 1 : 0);
+  if (state.hasMore) sizes.push(MORE_H);
+  const vl = v_virtual_list(LIST_ID, count, sizes, (i) => items[i]?.key ?? MORE_KEY,
     (range) => {
       const out = [];
       for (let i = range.start; i < range.end; i++) {
+        if (i === items.length) {
+          out.push(moreRow(t, rows.at(-1), graph.loading));
+          continue;
+        }
         const it = items[i];
         const c = commits[it.index];
         const row = rows[it.index];
@@ -257,6 +269,11 @@ function list(t, graph, state, section) {
       return out;
     })
     .on_item_click((key, cx) => {
+      if (key === MORE_KEY) {
+        void graph.loadMore();
+        cx.notify();
+        return;
+      }
       const it = byKey.get(key);
       if (!it) return;
       section.focus();
@@ -274,6 +291,23 @@ function list(t, graph, state, section) {
   return div().flex_1().min_h(0).relative()
     .child(vl)
     .child(Scrollbar.vertical(LIST_ID).absolute().inset_0());
+}
+
+const MORE_KEY = "more";
+const MORE_H = 26;
+
+/**
+ * "Load more…": adds 50 commits. The last commit's lanes carry on through it.
+ * @param {Record<string, string>} t @param {LaneRow | undefined} last @param {boolean} loading
+ */
+function moreRow(t, last, loading) {
+  return h_flex().w_full().h(MORE_H).flex_none().gap(6).pr(8).items_center().overflow_hidden()
+    .cursor_pointer().hover((s) => s.bg(t.hover))
+    .when(!!last, (e) => e.child(passThroughCell(t, /** @type {LaneRow} */ (last), MORE_H)))
+    .child(div().flex_none().w(INDENT))
+    .child(loading
+      ? h_flex().gap(6).text_size(12).text_color(t.dim).child(spinner(t)).child("Loading…")
+      : div().text_size(12).text_color(t.accent).child("Load more…"));
 }
 
 /** The body lines of a commit message: everything after the subject and its blank line. @param {Commit} c */
