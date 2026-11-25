@@ -1,5 +1,5 @@
 // @ts-check
-// Sync: Fetch and Push (and later Pull) with a remote. Never forces. Each sync is one entry on
+// Sync: Fetch, Pull and Push with a remote. Never forces. Each sync is one entry on
 // the Repository's queue with the long timeout. Exit codes don't tell Git's
 // failures apart, so a failure is classified by its text.
 //
@@ -35,8 +35,8 @@ import { GitTimeout } from "./git.js";
 
 /**
  * A sync command's outcome: Git's result, the remote it used when known, and a
- * failure `kind` (and `branch`) when the command itself knows it (it then skips the text rules).
- * @typedef {GitResult & { remote?: string, kind?: string, branch?: string }} SyncResult
+ * failure `kind` (and `branch`, `files`) when the command itself knows it (it then skips the text rules).
+ * @typedef {GitResult & { remote?: string, kind?: string, branch?: string, files?: number }} SyncResult
  */
 
 /** @type {Record<string, SyncOp>} */
@@ -65,7 +65,55 @@ export const SYNC_OPS = {
       return publish(ctx, branch);
     },
   },
+  pull: {
+    verb: "Pull",
+    running: "Pulling…",
+    // Always an explicit mode, and never an autostash. `options.mode` ("merge" or
+    // "rebase") is the one-off choice the divergence message offers; it is
+    // passed as a flag, never written to config.
+    async command(ctx, options) {
+      const mode = options.mode === "merge" ? ["--no-rebase", "--ff"]
+        : options.mode === "rebase" ? ["--rebase"]
+        : await configuredPullMode(ctx);
+      const before = await unmergedCount(ctx);
+      const r = await ctx.run(["pull", ...mode, "--no-autostash", "--no-edit"]);
+      // Conflicts are read from the repository, not the exit code. Files that
+      // were unmerged before the pull aren't this pull's conflicts.
+      const files = before ? 0 : await unmergedCount(ctx);
+      return files ? { ...r, ok: false, kind: "conflicts", files } : r;
+    },
+  },
 };
+
+/** How many files the index holds as unmerged (Conflicts). @param {SyncContext} ctx */
+async function unmergedCount(ctx) {
+  const r = await ctx.run(["ls-files", "--unmerged", "-z"], { read: true });
+  if (!r.ok) return 0;
+  // Each entry is "<mode> <oid> <stage>\t<path>"; a path has one entry per stage.
+  return new Set(r.stdout.split("\0").filter(Boolean).map((e) => e.slice(e.indexOf("\t") + 1))).size;
+}
+
+/** Git's spellings of a false boolean. */
+const FALSE = /^(?:false|no|off|0)$/i;
+
+/**
+ * The flags matching the user's pull config: `branch.<name>.rebase` (Git lets it
+ * override `pull.rebase`) or `pull.rebase`, and `pull.ff`. With none of them set,
+ * fast-forward only, so the Workbench never makes a merge or rebase nobody chose.
+ * An interactive rebase is pulled as a plain one (there is no editor).
+ * @param {SyncContext} ctx @returns {Promise<string[]>}
+ */
+async function configuredPullMode(ctx) {
+  const branch = (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+  const rebase = (branch && (await config(ctx, `branch.${branch}.rebase`))) || (await config(ctx, "pull.rebase"));
+  const ff = await config(ctx, "pull.ff");
+  if (!rebase && !ff) return ["--ff-only"];
+  /** @type {string[]} */
+  const flags = [];
+  if (rebase) flags.push(FALSE.test(rebase) ? "--no-rebase" : /^m(?:erges)?$/i.test(rebase) ? "--rebase=merges" : "--rebase");
+  if (ff) flags.push(/^only$/i.test(ff) ? "--ff-only" : FALSE.test(ff) ? "--no-ff" : "--ff");
+  return flags;
+}
 
 /** @typedef {keyof typeof SYNC_OPS} SyncName */
 
@@ -106,16 +154,18 @@ async function publish(ctx, branch) {
 
 /**
  * A recognised failure: its class, plus what its message needs.
- * @typedef {{ kind: string, remote: string | null, branch?: string }} SyncFailure
+ * @typedef {{ kind: string, remote: string | null, branch?: string, files?: number }} SyncFailure
  *   `remote` is the remote the failure names (or the command reported), if known;
- *   `branch` the branch the command acted on, when it says.
+ *   `branch` the branch the command acted on, when it says; `files` how many
+ *   files the failure is about, when known.
  */
 
 /**
  * Failure classes, recognised by Git's error text (stderr and stdout together),
  * checked in order. Git can be localised: unmatched text falls back to Git's own
  * first line. Text from git 2.45.2, see docs/research/graph-sync-exec.md §4.
- * @type {{ kind: string, match: RegExp[] }[]}
+ * `files`, when present, counts the files the failure names.
+ * @type {{ kind: string, match: RegExp[], files?: (output: string) => number | undefined }[]}
  */
 export const FAILURE_RULES = [
   {
@@ -137,6 +187,23 @@ export const FAILURE_RULES = [
     kind: "no-upstream",
     match: [/has no upstream branch/, /There is no tracking information/],
   },
+  {
+    // A pull that can only fast-forward, or has no mode, found local and remote commits.
+    kind: "divergence",
+    match: [/Not possible to fast-forward, aborting/, /Need to specify how to reconcile divergent branches/],
+  },
+  {
+    // Git lists each file, tab-indented, under the heading. A rebase pull refuses any
+    // local change up front ("cannot pull with rebase"), without a list.
+    kind: "would-overwrite",
+    match: [/would be overwritten by (?:merge|checkout):/, /cannot pull with rebase: (?:You have unstaged changes|Your index contains uncommitted changes)/],
+    files: (output) => {
+      const listed = new Set();
+      for (const block of output.matchAll(/would be overwritten by (?:merge|checkout):\n((?:\t.*(?:\n|$))+)/g))
+        for (const line of block[1].split("\n")) if (line.startsWith("\t")) listed.add(line.slice(1));
+      return listed.size || undefined;
+    },
+  },
 ];
 
 /**
@@ -147,12 +214,29 @@ export const FAILURE_MESSAGES = {
   auth: ({ remote }, op) => ({
     summary: `Couldn't sign in to ${remote ?? "the remote"}. Check your credentials (try \`git ${op.verb.toLowerCase()}\` in a terminal once)`,
   }),
-  // Pull (#50) adds its button here as `actions`.
   "rejected-push": () => ({
     summary: "Push rejected: the remote has commits you don't have. Pull first",
+    actions: [{ label: "Pull", sync: "pull" }],
   }),
   "no-upstream": (_failure, op) => ({
     summary: `${op.verb} needs an Upstream, and this branch has none. Publish it first`,
+  }),
+  // One-off choices: they pass a mode flag and never write config.
+  divergence: () => ({
+    summary: "Your branch and its Upstream have diverged",
+    actions: [
+      { label: "Pull (merge)", sync: "pull", options: { mode: "merge" } },
+      { label: "Pull (rebase)", sync: "pull", options: { mode: "rebase" } },
+    ],
+  }),
+  // Never autostashed: the user commits or discards.
+  "would-overwrite": ({ files }) => ({
+    summary: `Pull would overwrite local changes${files ? ` in ${filesCount(files)}` : ""}. Commit or discard them first`,
+  }),
+  // Reported by Pull from the repository's state. The Conflicts group and the
+  // Operation in progress take over; no Abort/Continue here.
+  conflicts: ({ files }) => ({
+    summary: `Pull stopped with conflicts in ${filesCount(files ?? 0)}`,
   }),
   // Reported by Publish itself, not matched from Git's text.
   "no-publish-remote": ({ branch }) => ({
@@ -170,8 +254,11 @@ export function classifyFailure(output, remote = null) {
   if (!rule) return null;
   // `fetch --all` with several remotes names each one that failed.
   const failed = [...output.matchAll(/could not fetch (\S+)/g)].map((m) => m[1]);
-  return { kind: rule.kind, remote: failed.length ? failed.join(", ") : remote };
+  return { kind: rule.kind, remote: failed.length ? failed.join(", ") : remote, files: rule.files?.(output) };
 }
+
+/** "1 file", "3 files". @param {number} n */
+const filesCount = (n) => `${n} ${n === 1 ? "file" : "files"}`;
 
 /** @typedef {Readonly<{ label: string, enabled: boolean, primary: boolean }>} SyncButton */
 /**
@@ -182,8 +269,8 @@ export function classifyFailure(output, remote = null) {
 /**
  * The Graph toolbar's sync buttons. Counts come from the snapshot's ahead/behind.
  * Pull is primary when behind; Push when ahead and not behind. Anything running
- * disables them; a detached HEAD or an Operation in progress disables Push. With
- * no Upstream, Push reads Publish. Pull stays disabled until it is built (#50).
+ * disables them; a detached HEAD or an Operation in progress disables Pull and Push.
+ * With no Upstream, Pull is disabled and Push reads Publish.
  * @param {SyncButtonStatus} s
  * @returns {{ fetch: SyncButton, pull: SyncButton, push: SyncButton }}
  */
@@ -195,7 +282,7 @@ export function syncButtons(s) {
   const publish = s.upstream === null && !s.detached;
   return {
     fetch: { label: "Fetch", enabled: idle, primary: false },
-    pull: { label: s.behind === null ? "Pull" : `Pull ↓${s.behind}`, enabled: false, primary: behind > 0 },
+    pull: { label: s.behind === null ? "Pull" : `Pull ↓${s.behind}`, enabled: idle && onBranch && s.upstream !== null, primary: behind > 0 },
     push: {
       label: publish ? "Publish" : s.ahead === null ? "Push" : `Push ↑${s.ahead}`,
       enabled: idle && onBranch,
@@ -252,6 +339,6 @@ export async function runSync({ git, machine, cwd, timeoutClass, sleep, relabel 
   if (r.ok) return null;
   const output = [r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n");
   const raw = actionError(output, `git ${op.verb.toLowerCase()} failed`);
-  const failure = r.kind ? { kind: r.kind, remote: r.remote ?? null, branch: r.branch } : classifyFailure(output, r.remote ?? null);
+  const failure = r.kind ? { kind: r.kind, remote: r.remote ?? null, branch: r.branch, files: r.files } : classifyFailure(output, r.remote ?? null);
   return failure ? { ...FAILURE_MESSAGES[failure.kind](failure, op), detail: raw.detail } : raw;
 }
