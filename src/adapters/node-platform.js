@@ -17,8 +17,21 @@ export function closeAllWatches() {
   for (const cancel of [...openWatches]) cancel();
 }
 
+/**
+ * The settings half of the platform port, kept in memory. Two platforms that
+ * share one store stand in for two loads of the mod.
+ */
+export function memorySettings(store = new Map()) {
+  return {
+    getSetting: (key) => (store.has(key) ? store.get(key) : null),
+    setSetting: (key, value) => void store.set(key, value),
+  };
+}
+
 /** @type {import("../core/platform.js").Platform} */
 export const nodePlatform = {
+  ...memorySettings(),
+
   exec(cmd, args, { cwd, timeout = 30_000 } = {}) {
     return new Promise((resolve, reject) => {
       execFile(cmd, args, { cwd, timeout, maxBuffer: 8 * 1024 * 1024, windowsHide: true, encoding: "utf8" }, (err, stdout, stderr) => {

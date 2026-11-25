@@ -12,6 +12,7 @@ import { layoutLanes } from "./lanes.js";
 import { commitFilesArgs, parseCommitFiles } from "./commit-files.js";
 import { createSignal, coalesce } from "./signal.js";
 import { actionError, messageOf } from "./errors.js";
+import { repositoryId } from "./repository-key.js";
 
 /** @typedef {import("./history.js").Commit} Commit */
 /** @typedef {import("./lanes.js").LaneRow} LaneRow */
@@ -23,6 +24,35 @@ import { actionError, messageOf } from "./errors.js";
  *   | { kind: "ready", files: readonly CommitFile[] }
  *   | { kind: "error", error: ActionError }>} CommitFiles
  */
+/**
+ * Which Refs the Graph starts from: HEAD and its Upstream, every branch, remote
+ * branch and tag, or HEAD only.
+ * @typedef {"auto" | "all" | "current"} RefFilter
+ */
+
+/** @type {readonly RefFilter[]} */
+export const REF_FILTERS = Object.freeze(["auto", "all", "current"]);
+
+/** The per-Repository setting key of the Ref filter. @param {import("./repository-key.js").RepositoryKey} key */
+export const refFilterSetting = (key) => `gitwb.refFilter.${repositoryId(key)}`;
+
+/**
+ * @typedef {{ unborn: boolean, detached: boolean, upstream: string | null, ahead: number | null }} HeadStatus
+ */
+
+/**
+ * The revisions a Ref filter starts from. Auto adds the Upstream only when it is
+ * set and still resolves (ahead/behind known) and HEAD is attached. All names
+ * branches, remote branches and tags, never every ref (stash, notes, pull
+ * requests). An unborn HEAD has no history: no revisions.
+ * @param {RefFilter} filter @param {HeadStatus | null} status @returns {string[]}
+ */
+function filterRevisions(filter, status) {
+  if (status?.unborn) return [];
+  if (filter === "all") return ["HEAD", "--branches", "--remotes", "--tags"];
+  const upstream = filter === "auto" && status && status.upstream !== null && status.ahead !== null && !status.detached;
+  return upstream ? ["HEAD", "@{upstream}"] : ["HEAD"];
+}
 /**
  * Immutable tagged union, discriminated by `kind`.
  * - idle: never loaded. loading: the first load runs (a reload keeps the
@@ -42,12 +72,17 @@ import { actionError, messageOf } from "./errors.js";
  * @param {{
  *   git: ReturnType<import("./git.js").createGit>,
  *   key: import("./repository-key.js").RepositoryKey,
- *   status: () => { unborn: boolean } | null,
- * }} deps `status` gives the Repository's latest status (null before the first read).
+ *   status: () => HeadStatus | null,
+ *   settings: Pick<import("./platform.js").Platform, "getSetting" | "setSetting">,
+ * }} deps `status` gives the Repository's latest status (null before the first read);
+ *   `settings` remembers the Ref filter per Repository.
  */
-export function createGraph({ git, key, status }) {
+export function createGraph({ git, key, status, settings }) {
   /** @type {GraphState} */
   let state = Object.freeze({ kind: "idle" });
+  const saved = settings.getSetting(refFilterSetting(key));
+  /** @type {RefFilter} */
+  let filter = REF_FILTERS.find((f) => f === saved) ?? "auto";
   let disposed = false;
   const changes = createSignal();
 
@@ -63,13 +98,8 @@ export function createGraph({ git, key, status }) {
     changes.emit();
   }
 
-  /** The revisions to start from: HEAD, unless it is unborn. */
-  function revisions() {
-    return status()?.unborn ? [] : ["HEAD"];
-  }
-
   async function read() {
-    const revs = revisions();
+    const revs = filterRevisions(filter, status());
     if (!revs.length) return set({ kind: "empty" });
     if (state.kind === "idle" || state.kind === "empty") set({ kind: "loading" });
     const count = PAGE_SIZE;
@@ -129,6 +159,8 @@ export function createGraph({ git, key, status }) {
   /** The shown commit with this oid, if any. @param {string} oid */
   const shown = (oid) => (state.kind === "ready" ? state.commits.find((c) => c.oid === oid) : undefined);
 
+  const load = coalesce(read);
+
   return {
     /** The Repository's key, for the Diff targets of commit files. */
     key,
@@ -146,7 +178,24 @@ export function createGraph({ git, key, status }) {
      * into a single follow-up. Failures land in the state as an error; it never rejects.
      * @returns {Promise<void>}
      */
-    load: coalesce(read),
+    load,
+
+    /** The Ref filter, remembered per Repository (Auto until chosen). @returns {RefFilter} */
+    get filter() {
+      return filter;
+    },
+
+    /**
+     * Chooses the Ref filter, remembers it for this Repository and reloads.
+     * @param {RefFilter} next @returns {Promise<void>}
+     */
+    setFilter(next) {
+      if (!REF_FILTERS.includes(next)) throw new Error(`Unknown Ref filter: ${next}`);
+      filter = next;
+      settings.setSetting(refFilterSetting(key), next);
+      changes.emit();
+      return load();
+    },
 
     /** True once loaded at least once (whatever the outcome), so reloads are worth running. */
     get started() {

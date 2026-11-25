@@ -29,6 +29,10 @@
  * @property {(machine: string | null) => string[]} gitCandidates
  *   Absolute paths to try, in order, when `git` is not on PATH on `machine`
  *   (Windows: %ProgramFiles%\Git\cmd\git.exe, then %LOCALAPPDATA%\Programs\Git\cmd\git.exe).
+ * @property {(key: string) => unknown} getSetting
+ *   A persisted setting, or null when it was never set. Survives a reload of the mod.
+ * @property {(key: string, value: string | number | boolean | null) => void} setSetting
+ *   Persists a setting (plain JSON values only).
  */
 
 export {};

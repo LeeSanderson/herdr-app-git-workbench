@@ -110,7 +110,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
   let disposed = false;
   const changes = createSignal();
   /** The history beside the Change groups. Its loads skip the queue (see graph.js). */
-  const graph = createGraph({ git, key, status: () => status });
+  const graph = createGraph({ git, key, status: () => status, settings: platform });
 
   /** Rebuilds the snapshot from the latest status, the queue and lastError, and tells listeners. */
   function publish() {
