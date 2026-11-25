@@ -8,6 +8,7 @@ import { repositoryKey, repositoryId } from "./repository-key.js";
 import { actionError, messageOf } from "./errors.js";
 import { createSignal, coalesce } from "./signal.js";
 import { createGraph } from "./graph.js";
+import { SYNC_OPS, runSync } from "./sync.js";
 
 /** Quiet time after the last relevant file event before refreshing. */
 export const DEBOUNCE_MS = 400;
@@ -189,15 +190,16 @@ export function createRepository({ git, key, queue, platform, dirs }) {
    * Sets `lastError` on failure and clears it on success.
    * @param {string} label shown in `snapshot.running`
    * @param {TimeoutClass} timeoutClass
-   * @param {(timeoutClass: TimeoutClass) => Promise<ActionError | null>} command
+   * @param {(timeoutClass: TimeoutClass, relabel: (label: string) => void) => Promise<ActionError | null>} command
+   *   `relabel` changes the label while it runs.
    * @returns {Promise<ActionResult>}
    */
   async function act(label, timeoutClass, command) {
-    const error = await queue.run({ label, timeoutClass }, async (entry) => {
+    const error = await queue.run({ label, timeoutClass }, async (entry, relabel) => {
       /** @type {ActionError | null} */
       let error;
       try {
-        error = await command(entry.timeoutClass);
+        error = await command(entry.timeoutClass, relabel);
       } catch (err) {
         // GitNotFound / GitTimeout
         error = { summary: messageOf(err), detail: messageOf(err) };
@@ -304,6 +306,22 @@ export function createRepository({ git, key, queue, platform, dirs }) {
         if (untrackedPaths.length) return runOnPaths(["clean", "-f", "-q"], untrackedPaths, timeoutClass);
         return null;
       });
+    },
+
+    /**
+     * Runs a sync (`"fetch"`) on the queue with the long timeout. A failure is
+     * classified into one message, with Git's full output as its detail. Successful
+     * or not, it then refreshes status and reloads a loaded Graph (keeping its state).
+     * @param {import("./sync.js").SyncName} name @param {Record<string, unknown>} [options]
+     * @returns {Promise<ActionResult>}
+     */
+    async sync(name, options = {}) {
+      const op = SYNC_OPS[name];
+      if (!op) throw new Error(`Unknown sync: ${name}`);
+      const result = await act(op.running, "long", (timeoutClass, relabel) =>
+        runSync({ git, machine: key.machine, cwd: key.toplevel, timeoutClass, sleep: platform.sleep, relabel }, op, options));
+      if (graph.started && !disposed) await graph.load();
+      return result;
     },
 
     /** True once the Workbench has let go of this Repository and its queue has drained. */

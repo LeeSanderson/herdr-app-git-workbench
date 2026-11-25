@@ -6,6 +6,7 @@
 // user's system and global git config.
 
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -16,6 +17,13 @@ const emptyConfig = path.join(configDir, "gitconfig");
 fs.writeFileSync(emptyConfig, "");
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = emptyConfig;
+// Never prompt or reach a credential helper: a sync test that needs credentials
+// fails fast instead of waiting on a terminal or a sign-in window.
+process.env.GIT_TERMINAL_PROMPT = "0";
+process.env.GCM_INTERACTIVE = "never";
+process.env.GIT_CONFIG_COUNT = "1";
+process.env.GIT_CONFIG_KEY_0 = "credential.helper";
+process.env.GIT_CONFIG_VALUE_0 = ""; // an empty value clears the helper list
 process.on("exit", () => fs.rmSync(configDir, { recursive: true, force: true }));
 
 /** A fresh empty temp folder. Removed by `cleanup()`. */
@@ -63,10 +71,7 @@ export function png(seed) {
 export function unbornRepo({ branch = "main" } = {}) {
   const root = tempDir("gitwb-repo-");
   git(root, "init", "-q", "-b", branch);
-  git(root, "config", "core.autocrlf", "false");
-  git(root, "config", "user.name", "Test");
-  git(root, "config", "user.email", "test@example.invalid");
-  git(root, "config", "commit.gpgsign", "false");
+  identify(root);
   return root;
 }
 
@@ -77,6 +82,68 @@ export function initRepo({ branch = "main", files = { "README.md": "hello\n" } }
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "Initial");
   return root;
+}
+
+/** Sets the test identity (and LF endings, no signing) on a working copy. */
+function identify(root) {
+  git(root, "config", "core.autocrlf", "false");
+  git(root, "config", "user.name", "Test");
+  git(root, "config", "user.email", "test@example.invalid");
+  git(root, "config", "commit.gpgsign", "false");
+}
+
+/** An empty bare repository, to use as a local remote. */
+export function bareRepo({ branch = "main" } = {}) {
+  const dir = tempDir("gitwb-bare-");
+  git(dir, "init", "-q", "--bare", "-b", branch);
+  return dir;
+}
+
+/** A clone of `remote` (a path) with the test identity set. */
+export function cloneRepo(remote) {
+  const root = tempDir("gitwb-clone-");
+  git(root, "clone", "-q", remote, ".");
+  identify(root);
+  return root;
+}
+
+/**
+ * A local bare `remote` holding one commit on `branch`, the working copy `root`
+ * that tracks it as `origin`, and a second clone `other` for "someone else's"
+ * commits. No network is involved.
+ */
+export function remoteRepo({ branch = "main", files } = {}) {
+  const remote = bareRepo({ branch });
+  const root = initRepo({ branch, files });
+  git(root, "remote", "add", "origin", remote);
+  git(root, "push", "-q", "-u", "origin", branch);
+  const other = cloneRepo(remote);
+  return { remote, root, other };
+}
+
+/** Commits `file` with `content` in `root`. */
+export function commitFile(root, file, content, message = `edit ${file}`) {
+  write(root, file, content);
+  git(root, "add", "--", file);
+  git(root, "commit", "-q", "-m", message);
+}
+
+/**
+ * A local HTTP remote that refuses every request with 401, so git needs
+ * credentials it can't get (prompts and helpers are off). Call `close()` when done.
+ * @returns {Promise<{ url: string, close(): Promise<void> }>}
+ */
+export async function unauthorisedRemote() {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(401, { "WWW-Authenticate": 'Basic realm="test"' });
+    res.end();
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+  return {
+    url: `http://127.0.0.1:${port}/repo.git`,
+    close: () => new Promise((r) => server.close(() => r())),
+  };
 }
 
 /** Compares paths across git's `C:/x` and Node's `C:\x` spellings. */
