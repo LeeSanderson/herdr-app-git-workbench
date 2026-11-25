@@ -163,7 +163,7 @@ export class GraphSection {
   }
 
   /**
-   * Row 2 of the toolbar: Fetch, Pull ↓n, Push ↑n, then go to current and refresh.
+   * Row 2 of the toolbar: Fetch, Pull ↓n, Push ↑n (or Publish), then go to current and refresh.
    * @param {Record<string, string>} t @param {Graph} graph @param {SyncBar} sync
    */
   toolbar(t, graph, sync) {

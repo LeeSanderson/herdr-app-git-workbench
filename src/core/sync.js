@@ -1,5 +1,5 @@
 // @ts-check
-// Sync: Fetch (and later Pull and Push) with a remote. Each sync is one entry on
+// Sync: Fetch and Push (and later Pull) with a remote. Never forces. Each sync is one entry on
 // the Repository's queue with the long timeout. Exit codes don't tell Git's
 // failures apart, so a failure is classified by its text.
 //
@@ -26,11 +26,17 @@ import { GitTimeout } from "./git.js";
  * @typedef {{
  *   verb: string,
  *   running: string,
- *   command(ctx: SyncContext, options: Record<string, unknown>): Promise<GitResult & { remote?: string }>,
+ *   command(ctx: SyncContext, options: Record<string, unknown>): Promise<SyncResult>,
  * }} SyncOp
  *   `verb` names it in messages ("Fetch"), `running` is its queue label ("Fetching…").
  *   `command` runs it and returns Git's result, with the remote it used when known;
  *   a non-zero exit is classified.
+ */
+
+/**
+ * A sync command's outcome: Git's result, the remote it used when known, and a
+ * failure `kind` (and `branch`) when the command itself knows it (it then skips the text rules).
+ * @typedef {GitResult & { remote?: string, kind?: string, branch?: string }} SyncResult
  */
 
 /** @type {Record<string, SyncOp>} */
@@ -43,19 +49,66 @@ export const SYNC_OPS = {
       const r = await ctx.run(["fetch", "--all"]);
       if (r.ok) return r;
       // With one remote, git names only its URL in errors: name the remote instead.
-      const remotes = await ctx.run(["remote"], { read: true });
-      const names = remotes.ok ? remotes.stdout.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+      const names = await remoteNames(ctx);
       return names.length === 1 ? { ...r, remote: names[0] } : r;
+    },
+  },
+  push: {
+    verb: "Push",
+    running: "Pushing…",
+    // Never a force flag of any kind, including --force-with-lease.
+    async command(ctx) {
+      const branch = (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+      // A configured Upstream counts even when its remote ref is gone.
+      // A detached HEAD (no branch) gets a plain push and Git's own error.
+      if (!branch || (await config(ctx, `branch.${branch}.merge`))) return ctx.run(["push"]);
+      return publish(ctx, branch);
     },
   },
 };
 
 /** @typedef {keyof typeof SYNC_OPS} SyncName */
 
+/** A config value, or "" when unset. @param {SyncContext} ctx @param {string} name */
+async function config(ctx, name) {
+  const r = await ctx.run(["config", "--get", name], { read: true });
+  return r.ok ? r.stdout.trim() : "";
+}
+
+/** The Repository's remote names. @param {SyncContext} ctx @returns {Promise<string[]>} */
+async function remoteNames(ctx) {
+  const r = await ctx.run(["remote"], { read: true });
+  return r.ok ? r.stdout.split("\n").map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/**
+ * Publish: pushes HEAD and sets the Upstream. The remote is the first that
+ * applies of the branch's push remote, the default push remote, the only remote,
+ * then `origin`. When none does (several remotes, no config, no `origin`) it
+ * fails as "no-publish-remote"; there is no picker.
+ * @param {SyncContext} ctx @param {string} branch
+ * @returns {Promise<SyncResult>}
+ */
+async function publish(ctx, branch) {
+  let remote = (branch && (await config(ctx, `branch.${branch}.pushRemote`))) || (await config(ctx, "remote.pushDefault"));
+  if (!remote) {
+    const names = await remoteNames(ctx);
+    remote = names.length === 1 ? names[0] : names.includes("origin") ? "origin" : "";
+    if (!remote) {
+      const stderr = names.length
+        ? `No push remote configured for ${branch}, and no origin among: ${names.join(", ")}`
+        : `No remote to publish ${branch} to`;
+      return { ok: false, code: 1, stdout: "", stderr, kind: "no-publish-remote", branch };
+    }
+  }
+  return { ...(await ctx.run(["push", "--set-upstream", remote, "HEAD"])), remote };
+}
+
 /**
  * A recognised failure: its class, plus what its message needs.
- * @typedef {{ kind: string, remote: string | null }} SyncFailure
- *   `remote` is the remote the failure names (or the command reported), if known.
+ * @typedef {{ kind: string, remote: string | null, branch?: string }} SyncFailure
+ *   `remote` is the remote the failure names (or the command reported), if known;
+ *   `branch` the branch the command acted on, when it says.
  */
 
 /**
@@ -75,6 +128,15 @@ export const FAILURE_RULES = [
       /Host key verification failed/,
     ],
   },
+  {
+    // The remote has commits the branch doesn't.
+    kind: "rejected-push",
+    match: [/\[rejected\].*\((?:non-fast-forward|fetch first)\)/],
+  },
+  {
+    kind: "no-upstream",
+    match: [/has no upstream branch/, /There is no tracking information/],
+  },
 ];
 
 /**
@@ -84,6 +146,17 @@ export const FAILURE_RULES = [
 export const FAILURE_MESSAGES = {
   auth: ({ remote }, op) => ({
     summary: `Couldn't sign in to ${remote ?? "the remote"}. Check your credentials (try \`git ${op.verb.toLowerCase()}\` in a terminal once)`,
+  }),
+  // Pull (#50) adds its button here as `actions`.
+  "rejected-push": () => ({
+    summary: "Push rejected: the remote has commits you don't have. Pull first",
+  }),
+  "no-upstream": (_failure, op) => ({
+    summary: `${op.verb} needs an Upstream, and this branch has none. Publish it first`,
+  }),
+  // Reported by Publish itself, not matched from Git's text.
+  "no-publish-remote": ({ branch }) => ({
+    summary: `Can't tell which remote to publish ${branch ?? "this branch"} to. Set one with \`git config remote.pushDefault <remote>\``,
   }),
 };
 
@@ -109,18 +182,25 @@ export function classifyFailure(output, remote = null) {
 /**
  * The Graph toolbar's sync buttons. Counts come from the snapshot's ahead/behind.
  * Pull is primary when behind; Push when ahead and not behind. Anything running
- * disables them. Pull and Push stay disabled until they are built (#49, #50).
+ * disables them; a detached HEAD or an Operation in progress disables Push. With
+ * no Upstream, Push reads Publish. Pull stays disabled until it is built (#50).
  * @param {SyncButtonStatus} s
  * @returns {{ fetch: SyncButton, pull: SyncButton, push: SyncButton }}
  */
 export function syncButtons(s) {
   const idle = s.running === null;
+  const onBranch = !s.detached && s.operation === "none";
   const behind = s.behind ?? 0;
   const ahead = s.ahead ?? 0;
+  const publish = s.upstream === null && !s.detached;
   return {
     fetch: { label: "Fetch", enabled: idle, primary: false },
     pull: { label: s.behind === null ? "Pull" : `Pull ↓${s.behind}`, enabled: false, primary: behind > 0 },
-    push: { label: s.ahead === null ? "Push" : `Push ↑${s.ahead}`, enabled: false, primary: ahead > 0 && behind === 0 },
+    push: {
+      label: publish ? "Publish" : s.ahead === null ? "Push" : `Push ↑${s.ahead}`,
+      enabled: idle && onBranch,
+      primary: ahead > 0 && behind === 0,
+    },
   };
 }
 
@@ -172,6 +252,6 @@ export async function runSync({ git, machine, cwd, timeoutClass, sleep, relabel 
   if (r.ok) return null;
   const output = [r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n");
   const raw = actionError(output, `git ${op.verb.toLowerCase()} failed`);
-  const failure = classifyFailure(output, r.remote ?? null);
+  const failure = r.kind ? { kind: r.kind, remote: r.remote ?? null, branch: r.branch } : classifyFailure(output, r.remote ?? null);
   return failure ? { ...FAILURE_MESSAGES[failure.kind](failure, op), detail: raw.detail } : raw;
 }
