@@ -14,6 +14,7 @@ import { createSignal, coalesce } from "./signal.js";
 import { actionError, errorFrom } from "./errors.js";
 import { repositoryId } from "./repository-key.js";
 import { pruneGraphSelection } from "./graph-keys.js";
+import { commitFileTarget } from "./diff-target.js";
 
 /** @typedef {import("./history.js").Commit} Commit */
 /** @typedef {import("./lanes.js").LaneRow} LaneRow */
@@ -39,7 +40,8 @@ export const REF_FILTERS = Object.freeze(["auto", "all", "current"]);
 export const refFilterSetting = (key) => `gitwb.refFilter.${repositoryId(key)}`;
 
 /**
- * @typedef {{ unborn: boolean, detached: boolean, upstream: string | null, ahead: number | null }} HeadStatus
+ * The status fields the Ref filter reads.
+ * @typedef {Pick<import("./repository.js").Snapshot, "unborn" | "detached" | "upstream" | "ahead">} HeadStatus
  */
 
 /**
@@ -184,9 +186,6 @@ export function createGraph({ git, key, status, settings }) {
   }
 
   return {
-    /** The Repository's key, for the Diff targets of commit files. */
-    key,
-
     /** @returns {GraphState} */
     get state() {
       return state;
@@ -203,9 +202,9 @@ export function createGraph({ git, key, status, settings }) {
     load,
 
     /**
-     * Loads 50 more commits than are shown: the same query at the larger count,
+     * Loads PAGE_SIZE more commits than are shown: the same query at the larger count,
      * replacing the snapshot (topological order keeps the rows already shown in
-     * place). Asking again before it lands asks for the same count, not 50 more.
+     * place). Asking again before it lands asks for the same count, not PAGE_SIZE more.
      * @returns {Promise<void>}
      */
     loadMore() {
@@ -295,6 +294,17 @@ export function createGraph({ git, key, status, settings }) {
      */
     files(oid) {
       return files.get(oid) ?? null;
+    },
+
+    /**
+     * The Diff target that opens `file` of the shown commit `oid` (from its first
+     * parent to the commit), or null when that commit isn't shown.
+     * @param {string} oid @param {CommitFile} file
+     * @returns {import("./diff-target.js").DiffTarget | null}
+     */
+    fileTarget(oid, file) {
+      const commit = shown(oid);
+      return commit ? commitFileTarget(key, commit, file) : null;
     },
 
     dispose() {

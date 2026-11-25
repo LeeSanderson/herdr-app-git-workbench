@@ -7,7 +7,6 @@ import { pathToFileURL } from "node:url";
 import { cleanup, initRepo, tempDir, git, write, png, docOf } from "./helpers/repo.js";
 import { createWorkbench } from "../src/core/workbench.js";
 import { nodePlatform } from "../src/adapters/node-platform.js";
-import { commitFileTarget } from "../src/core/diff-target.js";
 
 after(cleanup);
 
@@ -60,7 +59,8 @@ test("expanding a commit lists its modified, added, deleted and renamed files", 
 async function openFile(workbench, repository, commit, file) {
   const f = (await expandFiles(repository, commit.oid)).find((/** @type {any} */ x) => x.path === file);
   assert.ok(f, `no file ${file}`);
-  const target = commitFileTarget(repository.key, commit, f);
+  const target = repository.graph.fileTarget(commit.oid, f);
+  assert.ok(target, `no target for ${file}`);
   return { target, doc: docOf(await workbench.loadDiff(target)) };
 }
 

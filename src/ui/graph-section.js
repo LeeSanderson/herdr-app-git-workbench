@@ -8,7 +8,7 @@ import { v_flex, h_flex, v_virtual_list, v_resizable, resizable_panel, Scrollbar
 import { rowWidth } from "../core/lanes.js";
 import { graphItems } from "../core/graph-items.js";
 import { graphKeyAction, moveGraphSelection, selectedItem, currentRow, nextRegion } from "../core/graph-keys.js";
-import { commitFileTarget } from "../core/diff-target.js";
+import { REF_FILTERS } from "../core/graph.js";
 import { folderOf, nameOf } from "../core/status.js";
 import { openDiff } from "./diff-tabs.js";
 import { statusColor, printable, iconButton } from "./widgets.js";
@@ -20,7 +20,7 @@ import { statusColor, printable, iconButton } from "./widgets.js";
 /** @typedef {import("../core/lanes.js").LaneRow} LaneRow */
 /**
  * The toolbar's sync buttons and how to run one.
- * @typedef {{ buttons: ReturnType<typeof import("../core/sync.js").syncButtons>, run(name: string): void }} SyncBar
+ * @typedef {{ buttons: ReturnType<typeof import("../core/sync.js").syncButtons>, run(name: import("../core/sync.js").SyncName): void }} SyncBar
  */
 
 /** The divider's id: the window keeps the dragged sizes under it. */
@@ -57,6 +57,15 @@ export function relativeTime(iso, now) {
   const n = Math.floor(s / /** @type {number} */ (size));
   const plural = name !== "min" && name !== "h" && n !== 1 ? "s" : "";
   return `${n} ${name}${plural} ago`;
+}
+
+/**
+ * Opens a commit file's Diff view (nothing when the commit is no longer shown).
+ * @param {Graph} graph @param {string} oid @param {import("../core/commit-files.js").CommitFile} file
+ */
+function openFile(graph, oid, file) {
+  const target = graph.fileTarget(oid, file);
+  if (target) openDiff(target);
 }
 
 /** The visible rows of a ready Graph. @param {Graph} graph @param {Extract<GraphState, { kind: "ready" }>} state */
@@ -128,7 +137,7 @@ export class GraphSection {
     else if (action === "collapse") graph.collapse(item.oid);
     else if (action === "parent") graph.select({ oid: item.oid, path: null });
     else if (action === "toggle") void graph.toggle(item.oid);
-    else if (action === "open" && item.kind === "file") openDiff(commitFileTarget(graph.key, state.commits[item.index], item.file));
+    else if (action === "open" && item.kind === "file") openFile(graph, item.oid, item.file);
     cx.notify();
   }
 
@@ -214,8 +223,8 @@ function syncButton(t, id, button, onClick) {
     .child(button.label);
 }
 
-/** @type {[import("../core/graph.js").RefFilter, string][]} */
-const FILTER_LABELS = [["auto", "Auto"], ["all", "All"], ["current", "Current"]];
+/** Each Ref filter with its label, its name capitalised: Auto, All, Current. @type {[import("../core/graph.js").RefFilter, string][]} */
+const FILTER_LABELS = REF_FILTERS.map((f) => [f, f[0].toUpperCase() + f.slice(1)]);
 
 /**
  * The Auto | All | Current segments. Choosing one remembers it for the Repository and reloads.
@@ -321,7 +330,7 @@ function list(t, graph, state, section) {
         void graph.toggle(it.oid);
       } else if (it.kind === "file") {
         graph.select({ oid: it.oid, path: it.file.path });
-        openDiff(commitFileTarget(graph.key, commits[it.index], it.file));
+        openFile(graph, it.oid, it.file);
       }
       cx.notify();
     })
@@ -336,7 +345,7 @@ const MORE_KEY = "more";
 const MORE_H = 26;
 
 /**
- * "Load more…": adds 50 commits. The last commit's lanes carry on through it.
+ * "Load more…": adds PAGE_SIZE (history.js) commits. The last commit's lanes carry on through it.
  * @param {Record<string, string>} t @param {LaneRow | undefined} last @param {boolean} loading
  */
 function moreRow(t, last, loading) {
