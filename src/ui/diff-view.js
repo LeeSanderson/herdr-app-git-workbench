@@ -334,7 +334,7 @@ export class DiffView {
   staleBand(t) {
     return div().flex_none().px(12).py(3).border_b_1().border_color(t.border).bg(t.ansi3 + "22")
       .text_size(11).text_color(t.ansi3).truncate()
-      .child("Stale: this Repository is no longer followed, so this diff doesn't update. Press r to reload it once.");
+      .child("Stale: Repository not followed, so this doesn't update · r reloads");
   }
 
   /**
