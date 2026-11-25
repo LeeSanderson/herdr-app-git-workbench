@@ -26,4 +26,6 @@
 
 **Ref**: A named pointer into history shown as a badge in the Graph: a local branch, a remote branch, a tag, or HEAD.
 
+**Ref filter**: Which Refs the Graph starts from: **Auto** (HEAD and its upstream), **Current** (HEAD only), or **All** (every branch, remote branch and tag). Remembered per Repository.
+
 **Phase 1**: The MVP feature set. **Phase 2**: The follow-on feature set that Phase 1's design must not block.
