@@ -41,7 +41,7 @@ Support:
 - Discard individual file changes, with confirmation.
 - Commit staged changes with a commit message.
 - Amend the previous commit.
-- Fetch, pull and push.
+- Fetch, pull and push (from the Graph toolbar, §2.3).
 - Refresh repository status.
 
 ### 2.2 Diff Editor
@@ -63,6 +63,35 @@ Provide:
 The diff editor should be a proper code-review experience, not simply display the output of `git diff` in a terminal.
 
 Allow diffs to be opened in a separate Herdr pane and retain the ability to switch between multiple open files.
+
+### 2.3 Graph
+
+A collapsible **Graph** section inside the Source Control panel, below the Change groups. It is modelled on the Graph in VS Code's Source Control view.
+
+Display:
+
+- Commits reachable from the selected Refs, newest first in topological order, drawn with coloured lanes showing how each commit joins its parents. HEAD has a ringed dot, merge commits a hollow dot, and other commits a filled dot.
+- Two lines per commit. Line 1 shows the Ref badges and the subject (bold for HEAD). Line 2 shows the short oid, the author, a relative date, and a `merge` marker on merge commits.
+- Ref badges for HEAD, local branches, remote branches and tags, up to three per commit and then `+N`.
+- The first 50 commits, with a **Load more…** row that adds 50 more each time. "No commits yet" in an empty repository.
+
+Support:
+
+- Expanding a commit to show its details (full oid, author and email, date, parents, full message) and its changed files with status letters (M, A, D, R).
+- Opening a changed file in a Diff view, comparing the commit with its first parent (a root commit is compared with empty content).
+- A **Ref filter**: **Auto** (HEAD and its Upstream, the default), **All** (every branch, remote branch and tag) or **Current** (HEAD only), remembered per Repository.
+- Toolbar actions: go to current, refresh, **Fetch**, **Pull ↓n**, and **Push ↑n**. Push becomes **Publish** when the branch has no Upstream.
+- Keyboard navigation of commits and files, with Tab moving focus between the Change list, the commit box and the Graph.
+- A draggable divider between the Change groups and the Graph. The Graph takes up to two thirds of the panel by default.
+
+Behaviour:
+
+- The Graph reloads when HEAD or any Ref changes (inside or outside Herdr), after every Workbench Git operation, and on refresh. It never polls. A reload keeps expanded commits, the selection and the scroll position.
+- Pull follows the user's `pull.rebase` / `pull.ff` configuration. When neither is set, it fast-forwards only, and if the branches have diverged it offers a one-off merge or rebase. It never stashes automatically. A pull that stops with Conflicts hands over to the Conflicts group.
+- Push never forces. A rejected push suggests pulling first.
+- Sign-in is left to Git and its credential helper. When sign-in fails, the Workbench reports it clearly.
+
+Not in the Graph: commit actions that change history (checkout, create branch, cherry-pick, revert, reset), file history, a row for uncommitted changes, background auto-fetch, and Abort/Continue controls for a stopped merge or rebase.
 
 ## 3. Git integration
 
@@ -321,10 +350,12 @@ Use asynchronous execution for Git operations and ensure the interface remains r
 
 ### Subsequent enhancements
 
-- Commit history and commit details.
+- The Graph (§2.3): commit history, commit details, Ref badges and fetch/pull/push synchronisation.
 - File history.
 - Branch switching and creation.
-- Ahead/behind indicators and synchronisation.
+- Commit actions from the Graph (checkout, create branch, cherry-pick, revert, reset).
+- Abort/Continue controls for a stopped merge or rebase.
+- Background auto-fetch.
 - Hunk-level staging and unstaging.
 - Amend commits.
 - Multiple repository support.
