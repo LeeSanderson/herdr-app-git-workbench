@@ -6,7 +6,7 @@
  * A button on a failure's message that runs a sync, e.g. "Pull (rebase)" →
  * `{ label: "Pull (rebase)", sync: "pull", options: { mode: "rebase" } }`. The
  * panel runs it with `repository.sync(action.sync, action.options)`.
- * @typedef {Readonly<{ label: string, sync: string, options?: Readonly<Record<string, unknown>> }>} ErrorAction
+ * @typedef {Readonly<{ label: string, sync: import("./sync.js").SyncName, options?: Readonly<Record<string, unknown>> }>} ErrorAction
  */
 /**
  * `actions`, when present, are buttons the message offers (a sync failure's way out).

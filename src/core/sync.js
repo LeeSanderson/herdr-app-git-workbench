@@ -34,12 +34,18 @@ import { GitTimeout } from "./git.js";
  */
 
 /**
- * A sync command's outcome: Git's result, the remote it used when known, and a
- * failure `kind` (and `branch`, `files`) when the command itself knows it (it then skips the text rules).
- * @typedef {GitResult & { remote?: string, kind?: string, branch?: string, files?: number }} SyncResult
+ * A failure class: matched from Git's text by FAILURE_RULES, or reported by the
+ * command itself ("conflicts", "no-publish-remote"). Each has a FAILURE_MESSAGES entry.
+ * @typedef {"auth" | "rejected-push" | "no-upstream" | "divergence" | "would-overwrite" | "conflicts" | "no-publish-remote"} FailureKind
  */
 
-/** @type {Record<string, SyncOp>} */
+/**
+ * A sync command's outcome: Git's result, the remote it used when known, and a
+ * failure `kind` (and `branch`, `files`) when the command itself knows it (it then skips the text rules).
+ * @typedef {GitResult & { remote?: string, kind?: FailureKind, branch?: string, files?: number }} SyncResult
+ */
+
+/** `satisfies`, not `type`, so SyncName is the literal keys. @satisfies {Record<string, SyncOp>} */
 export const SYNC_OPS = {
   fetch: {
     verb: "Fetch",
@@ -80,7 +86,7 @@ export const SYNC_OPS = {
       // Conflicts are read from the repository, not the exit code. Files that
       // were unmerged before the pull aren't this pull's conflicts.
       const files = before ? 0 : await unmergedCount(ctx);
-      return files ? { ...r, ok: false, kind: "conflicts", files } : r;
+      return files ? { ...r, ok: false, kind: /** @type {const} */ ("conflicts"), files } : r;
     },
   },
 };
@@ -151,7 +157,7 @@ async function publish(ctx, branch) {
       const stderr = names.length
         ? `No push remote configured for ${branch}, and no origin among: ${names.join(", ")}`
         : `No remote to publish ${branch} to`;
-      return { ok: false, code: 1, stdout: "", stderr, kind: "no-publish-remote", branch };
+      return { ok: false, code: 1, stdout: "", stderr, kind: /** @type {const} */ ("no-publish-remote"), branch };
     }
   }
   return { ...(await ctx.run(["push", "--set-upstream", remote, "HEAD"])), remote };
@@ -159,7 +165,7 @@ async function publish(ctx, branch) {
 
 /**
  * A recognised failure: its class, plus what its message needs.
- * @typedef {{ kind: string, remote: string | null, branch?: string, files?: number }} SyncFailure
+ * @typedef {{ kind: FailureKind, remote: string | null, branch?: string, files?: number }} SyncFailure
  *   `remote` is the remote the failure names (or the command reported), if known;
  *   `branch` the branch the command acted on, when it says; `files` how many
  *   files the failure is about, when known.
@@ -171,7 +177,7 @@ async function publish(ctx, branch) {
  * first line. Text from git 2.45.2, see §4 of docs/research/graph-sync-exec.md on the
  * `research/graph-sync-exec` branch (not merged into main).
  * `files`, when present, counts the files the failure names.
- * @type {{ kind: string, match: RegExp[], files?: (output: string) => number | undefined }[]}
+ * @type {{ kind: FailureKind, match: RegExp[], files?: (output: string) => number | undefined }[]}
  */
 export const FAILURE_RULES = [
   {
@@ -214,7 +220,7 @@ export const FAILURE_RULES = [
 
 /**
  * The strip message of each failure class: a summary and, optionally, actions.
- * @type {Record<string, (failure: SyncFailure, op: SyncOp) => Omit<ActionError, "detail">>}
+ * @type {Record<FailureKind, (failure: SyncFailure, op: SyncOp) => Omit<ActionError, "detail">>}
  */
 export const FAILURE_MESSAGES = {
   auth: ({ remote }, op) => ({
