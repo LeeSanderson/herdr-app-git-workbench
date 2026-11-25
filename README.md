@@ -246,10 +246,10 @@ checked by hand in the running app. Results for Herdr Desktop 0.1.18 on Windows:
 
 | Check | Result |
 |---|---|
-| `Ctrl+Enter` in the commit box reaches the `Input` and commits | Pending |
-| `pane.go` moves focus onto the panel, and the panel keys work | Pending |
-| How many events `watchFolder` delivers for one change (e.g. a save, a `git commit`) | Pending |
-| `"place": "none"`: showing a personal layout does not auto-dock a second copy | Pending |
+| `Ctrl+Enter` in the commit box reaches the `Input` and commits | Pending: needs a person at the keyboard |
+| `pane.go` moves focus onto the panel, and the panel keys work | Pending: needs a person at the keyboard |
+| How many events `watchFolder` delivers for one change (e.g. a save, a `git commit`) | A save: 1 batch (now and then 2). `git add`: 2 batches. `git commit`: 1 batch of about 20 paths (objects, locks, refs, logs, index). Each burst gives one refresh (400 ms debounce). On Windows the paths come in verbatim form (`\\?\C:\...`); the filter accepts it. |
+| `"place": "none"`: showing a personal layout does not auto-dock a second copy | Pass: a personal layout with the `git-workbench` block shows that one copy only; `main` shows none |
 
 ## Development
 
