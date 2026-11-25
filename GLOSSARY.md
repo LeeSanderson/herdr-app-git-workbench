@@ -28,4 +28,8 @@
 
 **Ref filter**: Which Refs the Graph starts from: **Auto** (HEAD and its upstream), **Current** (HEAD only), or **All** (every branch, remote branch and tag). Remembered per Repository.
 
+**Upstream**: The remote branch a local branch tracks; ahead/behind counts are measured against it.
+
+**Publish**: Pushing a branch that has no Upstream for the first time, which sets one.
+
 **Phase 1**: The MVP feature set. **Phase 2**: The follow-on feature set that Phase 1's design must not block.
