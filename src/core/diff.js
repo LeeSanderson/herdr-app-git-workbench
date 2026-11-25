@@ -41,14 +41,23 @@ const DIFF_FLAGS = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"];
  */
 function diffArgs(t, context) {
   const flags = [...DIFF_FLAGS, context];
+  const paths = t.oldPath !== t.newPath ? [t.oldPath, t.newPath] : [t.newPath];
+  if (isCommit(t.right)) {
+    // A root commit (or shallow boundary) against empty content: diff-tree --root.
+    if (t.left === "EMPTY") return ["diff-tree", "-p", "--root", "--no-commit-id", ...flags.slice(1), "-M", t.right, "--", t.newPath];
+    if (isCommit(t.left)) return [...flags, "-M", t.left, t.right, "--", ...paths];
+    return null;
+  }
   if (t.left === "EMPTY") return [...flags, "--no-index", "--", "/dev/null", t.newPath];
   if (t.left === "HEAD" && t.right === "INDEX") {
-    const paths = t.oldPath !== t.newPath ? [t.oldPath, t.newPath] : [t.newPath];
     return [...flags, "--cached", "-M", "--", ...paths];
   }
   if (t.left === "INDEX" && t.right === "WORKTREE") return [...flags, "--", t.newPath];
   return null;
 }
+
+/** Whether a side is a commit oid (not HEAD, the index, the worktree or empty). @param {string} side */
+const isCommit = (side) => /^[0-9a-f]{40,64}$/.test(side);
 
 /**
  * The `git grep` arguments that count one side's lines (binary files count 0).
@@ -99,7 +108,7 @@ export async function loadDiff(git, target) {
   }
   const r = await git.run(machine, args, { cwd: toplevel, read: true });
   // `--no-index` exits 1 when the files differ; anything above that is an error.
-  const failed = target.left === "EMPTY" ? r.code > 1 || r.code < 0 : !r.ok;
+  const failed = args.includes("--no-index") ? r.code > 1 || r.code < 0 : !r.ok;
   if (failed) return { ok: false, error: actionError(r.stderr, "git diff failed") };
   return { ok: true, doc: createDiffDocument(target, parsePatch(r.stdout, truncated ? oldLines : undefined), { truncated, lines }) };
 }
