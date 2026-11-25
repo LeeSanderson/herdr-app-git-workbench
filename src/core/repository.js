@@ -309,7 +309,7 @@ export function createRepository({ git, key, queue, platform, dirs }) {
     },
 
     /**
-     * Runs a sync (`"fetch"`, `"push"`) on the queue with the long timeout. A failure is
+     * Runs a sync (`"fetch"`, `"pull"`, `"push"`) on the queue with the long timeout. A failure is
      * classified into one message, with Git's full output as its detail. Successful
      * or not, it then refreshes status and reloads a loaded Graph (keeping its state).
      * @param {import("./sync.js").SyncName} name @param {Record<string, unknown>} [options]

@@ -66,6 +66,24 @@ test("a push the remote rejects says to pull first, and never forces", async () 
   assert.deepEqual(pushes.flat().filter(isForce), []);
 });
 
+test("a rejected push offers a Pull button that runs a pull", async () => {
+  const { remote, root, other } = remoteRepo();
+  commitFile(other, "o.txt", "o\n", "Someone else's work");
+  git(other, "push", "-q");
+  commitFile(root, "b.txt", "b\n", "Local work");
+  git(root, "config", "pull.rebase", "true");
+  const repository = await follow(root);
+
+  const rejected = await repository.sync("push");
+  assert.deepEqual(rejected.error.actions.map((a) => a.label), ["Pull"]);
+  const [pull] = rejected.error.actions;
+
+  assert.deepEqual(await repository.sync(pull.sync, { ...pull.options }), { ok: true });
+  assert.equal(git(root, "log", "-1", "--format=%P").trim(), tip(remote, "main"));
+  assert.equal(repository.snapshot.behind, 0);
+  assert.deepEqual(await repository.sync("push"), { ok: true });
+});
+
 test("a push rejected as non-fast-forward after a fetch gives the same message", async () => {
   const { root, other } = remoteRepo();
   commitFile(other, "o.txt", "o\n", "Someone else's work");
