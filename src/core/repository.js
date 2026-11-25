@@ -3,16 +3,18 @@
 // Created and owned by the Workbench.
 
 import { parseStatus } from "./status.js";
-import { createQueue } from "./queue.js";
 import { isRelevant, watchRoots } from "./watch-filter.js";
+import { repositoryKey, repositoryId } from "./repository-key.js";
+import { actionError, messageOf } from "./errors.js";
+import { createSignal, coalesce } from "./signal.js";
 
 /** Quiet time after the last relevant file event before refreshing. */
 export const DEBOUNCE_MS = 400;
 
 /** @typedef {ReturnType<import("./git.js").createGit>} Git */
 /** @typedef {import("./git.js").TimeoutClass} TimeoutClass */
-/** @typedef {{ machine: string | null, toplevel: string }} RepositoryKey */
-/** @typedef {{ summary: string, detail: string }} ActionError */
+/** @typedef {import("./repository-key.js").RepositoryKey} RepositoryKey */
+/** @typedef {import("./errors.js").ActionError} ActionError */
 /** @typedef {"merge" | "rebase" | "cherry-pick" | "revert" | "none"} Operation */
 /** @typedef {{ ok: boolean, error?: ActionError }} ActionResult */
 /**
@@ -31,14 +33,6 @@ export const DEBOUNCE_MS = 400;
  *   watchError: string | null,
  * }>} Snapshot
  */
-
-/**
- * Stable string form of a Repository key, for registries and plain-JSON props.
- * @param {RepositoryKey | string} key
- */
-export function repositoryId(key) {
-  return typeof key === "string" ? key : JSON.stringify([key.machine ?? null, key.toplevel]);
-}
 
 /**
  * Pathspecs for `paths`, taken literally (no glob or magic), in batches that keep
@@ -93,42 +87,33 @@ async function readOperation(readTextFile, machine, gitDir) {
   return at < 0 ? "none" : OPERATION_MARKERS[at][1];
 }
 
-/** @param {string} stderr @param {string} fallback @returns {ActionError} */
-function errorFrom(stderr, fallback) {
-  const detail = stderr.trim();
-  const first = detail.split("\n").find((l) => l.trim()) ?? "";
-  return { summary: first.trim() || fallback, detail: detail || fallback };
-}
-
 /** @typedef {import("./platform.js").Platform["readTextFile"]} ReadTextFile */
 
 /**
- * @param {{ git: Git, key: RepositoryKey, queue?: import("./queue.js").Queue, gitDir?: string, readTextFile?: ReadTextFile, platform?: import("./platform.js").Platform, dirs?: import("./watch-filter.js").RepositoryDirs }} deps
- *   `queue` is shared by every Repository with the same common git dir. `gitDir` is the
- *   absolute real git dir (per worktree), where `readTextFile` looks for the Operation in
- *   progress; without both, `operation` is always "none". With `platform` and `dirs`,
- *   the Repository watches its working tree and git dirs until `dispose()`, refreshing
- *   (debounced) on relevant events.
+ * @param {{ git: Git, key: RepositoryKey, queue: import("./queue.js").Queue, platform: import("./platform.js").Platform, dirs: import("./watch-filter.js").RepositoryDirs }} deps
+ *   `queue` is shared by every Repository with the same common git dir. `dirs` are the
+ *   absolute working tree, real git dir (per worktree, where the Operation in progress
+ *   is read) and common dir. The Repository watches them until `dispose()`,
+ *   refreshing (debounced) on relevant events.
  */
-export function createRepository({ git, key, queue = createQueue(), gitDir, readTextFile, platform, dirs }) {
-  key = Object.freeze({ machine: key.machine ?? null, toplevel: key.toplevel });
+export function createRepository({ git, key, queue, platform, dirs }) {
+  key = repositoryKey(key);
   /** @type {(ReturnType<typeof parseStatus> & { operation: Operation }) | null} */
   let status = null;
   /** @type {Snapshot | null} */
   let snapshot = null;
   /** @type {ActionError | null} */
   let lastError = null;
-  /** Why the file watch stopped, or null while it runs (or when nothing is watched). @type {string | null} */
+  /** Why the file watch stopped, or null while it runs. @type {string | null} */
   let watchError = null;
   let disposed = false;
-  /** @type {Set<() => void>} */
-  const listeners = new Set();
+  const changes = createSignal();
 
   /** Rebuilds the snapshot from the latest status, the queue and lastError, and tells listeners. */
   function publish() {
     if (!status) return;
     snapshot = Object.freeze({ ...status, running: queue.running, lastError, watchError });
-    for (const fn of [...listeners]) fn();
+    changes.emit();
   }
   const offQueue = queue.subscribe(publish);
 
@@ -136,37 +121,17 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
   async function readStatus() {
     const [r, operation] = await Promise.all([
       git.run(key.machine, ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], { cwd: key.toplevel, read: true }),
-      gitDir && readTextFile ? readOperation(readTextFile, key.machine, gitDir) : /** @type {Operation} */ ("none"),
+      readOperation(platform.readTextFile, key.machine, dirs.gitDir),
     ]);
-    if (!r.ok) return { ok: false, error: errorFrom(r.stderr, "git status failed") };
+    if (!r.ok) return { ok: false, error: actionError(r.stderr, "git status failed") };
     if (disposed) return { ok: true };
     status = { ...parseStatus(r.stdout), operation };
     publish();
     return { ok: true };
   }
 
-  // A refresh requested while one runs merges into a single follow-up.
-  /** @type {Promise<ActionResult> | null} */
-  let running = null;
-  /** @type {Promise<ActionResult> | null} */
-  let followUp = null;
-  /** @returns {Promise<ActionResult>} */
-  function refresh() {
-    if (!running) {
-      running = readStatus().finally(() => {
-        running = null;
-      });
-      return running;
-    }
-    if (!followUp) {
-      const next = () => {
-        followUp = null;
-        return refresh();
-      };
-      followUp = running.then(next, next);
-    }
-    return followUp;
-  }
+  /** A refresh requested while one runs merges into a single follow-up. */
+  const refresh = coalesce(readStatus);
 
   // Debounce: refresh once relevant events have been quiet for DEBOUNCE_MS.
   let eventSeq = 0;
@@ -179,7 +144,7 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
       let seen;
       do {
         seen = eventSeq;
-        await /** @type {import("./platform.js").Platform} */ (platform).sleep(DEBOUNCE_MS);
+        await platform.sleep(DEBOUNCE_MS);
       } while (seen !== eventSeq && !disposed);
     } finally {
       debouncing = false;
@@ -189,23 +154,21 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
 
   /** @type {import("./platform.js").Watch[]} */
   const watches = [];
-  if (platform && dirs) {
-    for (const dir of watchRoots(dirs)) {
-      const w = platform.watch(dir);
-      watches.push(w);
-      (async () => {
-        for await (const batch of w.events) {
-          if (disposed) return;
-          if (batch.some((p) => isRelevant(p, dirs))) schedule();
-        }
-      })().catch((err) => {
-        // The watch stopped (e.g. Herdr's 64-folder limit). Say so; refreshes
-        // still come from actions, focus and the refresh button.
+  for (const dir of watchRoots(dirs)) {
+    const w = platform.watch(dir);
+    watches.push(w);
+    (async () => {
+      for await (const batch of w.events) {
         if (disposed) return;
-        watchError = String(err?.message ?? err);
-        publish();
-      });
-    }
+        if (batch.some((p) => isRelevant(p, dirs))) schedule();
+      }
+    })().catch((err) => {
+      // The watch stopped (e.g. Herdr's 64-folder limit). Say so; refreshes
+      // still come from actions, focus and the refresh button.
+      if (disposed) return;
+      watchError = messageOf(err);
+      publish();
+    });
   }
 
   /**
@@ -224,8 +187,7 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
         error = await command(entry.timeoutClass);
       } catch (err) {
         // GitNotFound / GitTimeout
-        const message = String(err?.message ?? err);
-        error = { summary: message, detail: message };
+        error = { summary: messageOf(err), detail: messageOf(err) };
       }
       lastError = error;
       await self.refresh();
@@ -242,7 +204,7 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
   async function runOnPaths(args, paths, timeoutClass) {
     for (const batch of pathspecBatches(paths)) {
       const r = await git.run(key.machine, [...args, "--", ...batch], { cwd: key.toplevel, timeoutClass });
-      if (!r.ok) return errorFrom(r.stderr, `git ${args[0]} failed`);
+      if (!r.ok) return actionError(r.stderr, `git ${args[0]} failed`);
     }
     return null;
   }
@@ -256,11 +218,8 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
       return snapshot;
     },
 
-    /** @param {() => void} fn @returns {() => void} */
-    subscribe(fn) {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
+    /** Called after every snapshot change. @param {() => void} fn @returns {() => void} */
+    subscribe: changes.subscribe,
 
     /** Re-reads the repository from Git; a call while one runs merges into a single follow-up. */
     refresh,
@@ -301,7 +260,7 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
         const args = ["commit", ...(amend ? ["--amend"] : []), "-m", message];
         const r = await git.run(key.machine, args, { cwd: key.toplevel, timeoutClass });
         // Hooks write to stderr; Git's own refusals ("nothing to commit") go to stdout.
-        return r.ok ? null : errorFrom([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
+        return r.ok ? null : actionError([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
       });
     },
 
@@ -317,13 +276,13 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
         // Sorted by the snapshot current when the queue reaches this entry.
         const untracked = new Set(snapshot?.groups.untracked.map((c) => c.path) ?? []);
         const tracked = paths.filter((p) => !untracked.has(p));
-        const fresh = paths.filter((p) => untracked.has(p));
+        const untrackedPaths = paths.filter((p) => untracked.has(p));
         if (tracked.length) {
           const error = await runOnPaths(["restore", "--worktree"], tracked, timeoutClass);
           if (error) return error;
         }
         // `clean` without -d/-x removes only these untracked files, never ignored ones.
-        if (fresh.length) return runOnPaths(["clean", "-f", "-q"], fresh, timeoutClass);
+        if (untrackedPaths.length) return runOnPaths(["clean", "-f", "-q"], untrackedPaths, timeoutClass);
         return null;
       });
     },
@@ -338,7 +297,7 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
       disposed = true;
       for (const w of watches.splice(0)) w.cancel();
       offQueue();
-      listeners.clear();
+      changes.clear();
     },
   };
   return self;

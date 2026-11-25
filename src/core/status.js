@@ -26,6 +26,12 @@
  * }} Status
  */
 
+/** The folder part of a Git path, with its trailing slash ("" at the top level). @param {string} p */
+export const folderOf = (p) => p.slice(0, p.lastIndexOf("/") + 1);
+
+/** The file-name part of a Git path. @param {string} p */
+export const nameOf = (p) => p.slice(p.lastIndexOf("/") + 1);
+
 /**
  * Whether a Change can be discarded: unstaged edits and untracked files only,
  * never staged Changes or Conflicts.

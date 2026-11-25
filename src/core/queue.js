@@ -4,6 +4,9 @@
 // worktrees of one repository share it. Entries are uncancellable (exec has
 // no cancel). Reads (status, diff) skip the queue.
 
+import { machineId } from "./repository-key.js";
+import { createSignal } from "./signal.js";
+
 /** @typedef {import("./git.js").TimeoutClass} TimeoutClass */
 /** @typedef {Readonly<{ label: string, timeoutClass: TimeoutClass }>} QueueEntry */
 
@@ -12,7 +15,7 @@
  * @param {{ machine: string | null, commonDir: string }} key
  */
 export function queueId({ machine, commonDir }) {
-  return JSON.stringify([machine ?? null, commonDir.replace(/\\/g, "/").replace(/\/+$/, "")]);
+  return machineId(machine, commonDir.replace(/\\/g, "/").replace(/\/+$/, ""));
 }
 
 export function createQueue() {
@@ -21,12 +24,8 @@ export function createQueue() {
   /** @type {QueueEntry | null} */
   let running = null;
   let pending = 0;
-  /** @type {Set<() => void>} */
-  const listeners = new Set();
-
-  const emit = () => {
-    for (const fn of [...listeners]) fn();
-  };
+  const changes = createSignal();
+  const emit = changes.emit;
 
   return {
     /** The entry running now, or null. */
@@ -40,10 +39,7 @@ export function createQueue() {
     },
 
     /** Called whenever `running` changes. @param {() => void} fn @returns {() => void} */
-    subscribe(fn) {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
+    subscribe: changes.subscribe,
 
     /**
      * Runs `fn` after every entry added before it has finished.

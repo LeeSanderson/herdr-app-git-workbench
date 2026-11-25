@@ -25,7 +25,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { props, theme, settings, shared, setShared } from "herdr";
-import { statusLetter, statusColor, printable, folderOf, nameOf } from "./theme.js";
+import { statusLetter, statusColor, printable, band, iconButton } from "./widgets.js";
+import { folderOf, nameOf } from "../core/status.js";
 import { claimTab } from "./diff-tabs.js";
 import { displaySegments } from "../core/display.js";
 import { changeAnchors } from "../core/rows.js";
@@ -125,6 +126,8 @@ export class DiffView {
     this.bodyW = null;
     /** The pan bar's track bounds while its thumb is dragged. @type {{ x: number, width: number } | null} */
     this.drag = null;
+    /** Text columns visible this render; set by `body` before any row renders. */
+    this.cols = 80;
     // A new Diff tab takes the keyboard so n/p/i work straight away (unverified in the app).
     this.handle.focus();
     if (this.target) {
@@ -193,6 +196,8 @@ export class DiffView {
 
   /** The rows area's width: measured from mouse events, estimated from the window until then. */
   bodyWidth() {
+    // gpui's global `window` (the Window, with viewport_size), not herdr's `window()`
+    // (the OS window's state), which the panel imports.
     return this.bodyW ?? (globalThis.window?.viewport_size?.().width ?? 1400) - 300;
   }
 
@@ -329,10 +334,7 @@ export class DiffView {
 
   /** ⟳: reloads now. @param {Record<string, string>} t */
   reloadButton(t) {
-    return div().id("reload").flex_none().w(22).h(22).rounded(4).flex().items_center().justify_center()
-      .text_size(13).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_click((_e, cx) => { cx.stop_propagation(); this.reload(); cx.notify(); })
-      .child("⟳");
+    return iconButton(t, "reload", "⟳", () => this.reload());
   }
 
   /**
@@ -341,8 +343,7 @@ export class DiffView {
    * @param {Record<string, string>} t
    */
   staleBand(t) {
-    return div().flex_none().px(12).py(3).border_b_1().border_color(t.border).bg(t.ansi3 + "22")
-      .text_size(11).text_color(t.ansi3).truncate()
+    return band(t, t.ansi3).px(12).py(3).truncate()
       .child("Stale: Repository not followed, so this doesn't update · r reloads");
   }
 
@@ -504,7 +505,7 @@ export class DiffView {
    */
   text(t, text, changed, base) {
     const all = displaySegments(text, changed);
-    const cols = this.cols ?? 80;
+    const cols = this.cols;
     let win = columns(all, this.pan, cols);
     if (win.right) win = { ...columns(all, this.pan, cols - 1), right: true };
     const segs = win.segs;

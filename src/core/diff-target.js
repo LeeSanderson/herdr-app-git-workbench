@@ -2,7 +2,10 @@
 // Diff targets: what a Diff view compares. A target is plain JSON because it
 // travels through `tab.new` props; it carries enough to reload without the panel.
 
-/** @typedef {import("./repository.js").RepositoryKey} RepositoryKey */
+import { repositoryKey, machineId } from "./repository-key.js";
+import { nameOf } from "./status.js";
+
+/** @typedef {import("./repository-key.js").RepositoryKey} RepositoryKey */
 /** @typedef {import("./status.js").Change} Change */
 /** @typedef {"HEAD" | "INDEX" | "WORKTREE" | "EMPTY" | string} Side  a commit sha is also a side */
 /**
@@ -27,14 +30,14 @@ const SIDES = {
 };
 
 /**
- * The Diff target that shows `change` from the Repository with key `repositoryKey`. Pure.
- * @param {RepositoryKey} repositoryKey @param {Change} change
+ * The Diff target that shows `change` from the Repository with key `key`. Pure.
+ * @param {RepositoryKey} key @param {Change} change
  * @returns {DiffTarget}
  */
-export function diffTargetFor(repositoryKey, change) {
+export function diffTargetFor(key, change) {
   const [left, right] = SIDES[change.group];
   return {
-    repository: { machine: repositoryKey.machine ?? null, toplevel: repositoryKey.toplevel },
+    repository: { ...repositoryKey(key) },
     left,
     right,
     oldPath: change.oldPath ?? change.path,
@@ -50,7 +53,7 @@ export function diffTargetFor(repositoryKey, change) {
  * @param {DiffTarget} t
  */
 export function targetKey(t) {
-  return JSON.stringify([t.repository.machine ?? null, t.repository.toplevel, t.left, t.right, t.oldPath, t.newPath]);
+  return machineId(t.repository.machine, t.repository.toplevel, t.left, t.right, t.oldPath, t.newPath);
 }
 
 /**
@@ -58,6 +61,5 @@ export function targetKey(t) {
  * @param {DiffTarget} t
  */
 export function tabName(t) {
-  const name = t.newPath.slice(t.newPath.lastIndexOf("/") + 1);
-  return `Δ ${name}${t.right === "INDEX" ? " (staged)" : ""}`;
+  return `Δ ${nameOf(t.newPath)}${t.right === "INDEX" ? " (staged)" : ""}`;
 }

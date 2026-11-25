@@ -3,14 +3,16 @@
 // Creating it makes no host calls; nothing runs until `follow`.
 
 import { createGit, GitNotFound } from "./git.js";
-import { createRepository, repositoryId } from "./repository.js";
+import { createRepository } from "./repository.js";
+import { repositoryKey, repositoryId } from "./repository-key.js";
+import { createSignal } from "./signal.js";
 import { createQueue, queueId } from "./queue.js";
 import { loadDiff } from "./diff.js";
 
 /** @typedef {import("./platform.js").Platform} Platform */
 /** @typedef {import("./queue.js").Queue} Queue */
 /** @typedef {import("./repository.js").Repository} Repository */
-/** @typedef {import("./repository.js").RepositoryKey} RepositoryKey */
+/** @typedef {import("./repository-key.js").RepositoryKey} RepositoryKey */
 /**
  * Immutable tagged union, discriminated by `kind`.
  * @typedef {Readonly<{ kind: "git-missing" }
@@ -24,8 +26,7 @@ export function createWorkbench(platform) {
   const git = createGit(platform);
   /** @type {WorkbenchState} */
   let state = Object.freeze({ kind: "loading", folder: "" });
-  /** @type {Set<() => void>} */
-  const listeners = new Set();
+  const changes = createSignal();
   /** @type {Map<string, Repository>} Repository id → Repository */
   const repositories = new Map();
   /** @type {{ repository: Repository, close(): Promise<void> } | null} the followed Repository */
@@ -37,7 +38,7 @@ export function createWorkbench(platform) {
   /** @param {WorkbenchState} next */
   function setState(next) {
     state = Object.freeze(next);
-    for (const fn of [...listeners]) fn();
+    changes.emit();
   }
 
   /** @type {Map<string, { queue: Queue, users: number }>} queue id → queue shared by Repositories of one common dir */
@@ -54,8 +55,7 @@ export function createWorkbench(platform) {
     if (!slot) queues.set(qid, (slot = { queue: createQueue(), users: 0 }));
     slot.users++;
     const repository = createRepository({
-      git, key, queue: slot.queue, gitDir, readTextFile: platform.readTextFile,
-      platform, dirs: { root: key.toplevel, gitDir, commonDir },
+      git, key, queue: slot.queue, platform, dirs: { root: key.toplevel, gitDir, commonDir },
     });
     const shared = slot;
     return {
@@ -83,10 +83,7 @@ export function createWorkbench(platform) {
     },
 
     /** Called after every state change. @param {() => void} fn @returns {() => void} */
-    subscribe(fn) {
-      listeners.add(fn);
-      return () => listeners.delete(fn);
-    },
+    subscribe: changes.subscribe,
 
     /**
      * The followed Repository with this key, or undefined when it is no longer followed.
@@ -131,7 +128,7 @@ export function createWorkbench(platform) {
           return setState({ kind: "no-repository", folder });
         }
         const [toplevel, commonDir, gitDir] = top.stdout.split("\n").map((l) => l.trim());
-        const key = { machine: machine ?? null, toplevel };
+        const key = repositoryKey({ machine, toplevel });
         if (current?.repository.id === repositoryId(key) && state.kind === "ready") return;
 
         leave();

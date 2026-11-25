@@ -4,11 +4,12 @@
 import { div } from "gpui-kit";
 import { spaces, home, theme, run, checking, nextCommand, openOverlay, window } from "herdr";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
-import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
+import { statusLetter, statusColor, printable, scrollArea, band, iconButton } from "./widgets.js";
 import { diffTargetFor } from "../core/diff-target.js";
 import { commitReadiness } from "../core/commit.js";
-import { isDiscardable, unstagedChanges } from "../core/status.js";
-import { openDiff } from "./diff-tabs.js";
+import { isDiscardable, unstagedChanges, folderOf, nameOf } from "../core/status.js";
+import { messageOf } from "../core/errors.js";
+import { openDiff, MOD } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
@@ -30,8 +31,8 @@ function nextChange(workbench) {
       resolve();
     };
     offs.push(workbench.subscribe(done));
-    const s = workbench.state;
-    if (s.kind === "ready") offs.push(s.repository.subscribe(done));
+    const state = workbench.state;
+    if (state.kind === "ready") offs.push(state.repository.subscribe(done));
   });
 }
 
@@ -112,7 +113,7 @@ export class SourceControlPanel {
       props: {
         title: "Discard changes?",
         detail: `${printable(change.path)} will be restored. This cannot be undone.`,
-        command: { name: "herdr-app-git-workbench.discard" },
+        command: { name: `${MOD}.discard` },
       },
     });
   }
@@ -155,7 +156,7 @@ export class SourceControlPanel {
     if (!where || this.workbench.isFollowing(where)) return;
     this.error = null;
     this.workbench.follow(where).catch((err) => {
-      this.error = String(err?.message ?? err);
+      this.error = messageOf(err);
     });
   }
 
@@ -206,9 +207,9 @@ export class SourceControlPanel {
     const state = this.workbench.state;
     if (this.committing || state.kind !== "ready") return;
     const { repository } = state;
-    const s = repository.snapshot;
+    const snapshot = repository.snapshot;
     const message = this.message.value();
-    if (!s || s.running !== null || !commitReadiness(s.groups, message).ready) return;
+    if (!snapshot || snapshot.running !== null || !commitReadiness(snapshot.groups, message).ready) return;
     this.committing = true;
     try {
       const result = await repository.commit({ message });
@@ -235,22 +236,22 @@ export class SourceControlPanel {
   current() {
     const state = this.workbench.state;
     if (state.kind !== "ready" || !state.repository.snapshot) return null;
-    return { repository: state.repository, s: state.repository.snapshot };
+    return { repository: state.repository, snapshot: state.repository.snapshot };
   }
 
   /** Stages every unstaged row (Conflicts are marked resolved), like the Stage all button. */
   stageAll() {
     const cur = this.current();
-    if (!cur || cur.s.running !== null) return;
-    const unstaged = unstagedChanges(cur.s.groups);
+    if (!cur || cur.snapshot.running !== null) return;
+    const unstaged = unstagedChanges(cur.snapshot.groups);
     if (unstaged.length) void cur.repository.stage(unstaged.map((c) => c.path));
   }
 
   /** Unstages every staged row, like the Unstage all button. */
   unstageAll() {
     const cur = this.current();
-    if (!cur || cur.s.running !== null || !cur.s.groups.staged.length) return;
-    void cur.repository.unstage(cur.s.groups.staged.flatMap(pathsOf));
+    if (!cur || cur.snapshot.running !== null || !cur.snapshot.groups.staged.length) return;
+    void cur.repository.unstage(cur.snapshot.groups.staged.flatMap(pathsOf));
   }
 
   /**
@@ -262,7 +263,7 @@ export class SourceControlPanel {
   onListKey(e, cx) {
     if (this.typing || !this.handle.is_focused()) return;
     const cur = this.current();
-    const rows = cur ? listRows(cur.s.groups) : [];
+    const rows = cur ? listRows(cur.snapshot.groups) : [];
     const selection = settleSelection(rows, this.selection);
     const row = selection ? rows[selection.index] : null;
     const action = listKeyAction(e.keystroke, row?.change ?? null);
@@ -278,10 +279,10 @@ export class SourceControlPanel {
       return;
     }
     if (!cur || !row) return;
-    const { repository, s } = cur;
+    const { repository, snapshot } = cur;
     const change = row.change;
     if (action === "open") openDiff(diffTargetFor(repository.key, change));
-    else if (s.running !== null) return; // Stage/unstage/discard wait, as the disabled controls do.
+    else if (snapshot.running !== null) return; // Stage/unstage/discard wait, as the disabled controls do.
     else if (action === "toggle") {
       if (change.group === "staged") void repository.unstage(pathsOf(change));
       else void repository.stage([change.path]);
@@ -317,44 +318,28 @@ export class SourceControlPanel {
   topBar(t, state) {
     const bar = h_flex().flex_none().h(34).px(10).gap(8).items_center().border_b_1().border_color(t.border);
     if (state.kind === "ready" && state.repository.snapshot) {
-      const s = state.repository.snapshot;
+      const snapshot = state.repository.snapshot;
       bar.child(div().flex_none().text_color(t.muted).child("⎇"));
-      if (s.detached) {
+      if (snapshot.detached) {
         bar.child(div().flex_none().font_weight(600).text_color(t.ansi3).child("detached HEAD"));
-        if (s.headOid) bar.child(div().flex_none().text_size(11).text_color(t.dim).child(s.headOid.slice(0, 7)));
+        if (snapshot.headOid) bar.child(div().flex_none().text_size(11).text_color(t.dim).child(snapshot.headOid.slice(0, 7)));
       } else {
-        bar.child(div().flex_shrink(1).min_w(0).truncate().font_weight(600).child(s.branch ?? ""));
+        bar.child(div().flex_shrink(1).min_w(0).truncate().font_weight(600).child(snapshot.branch ?? ""));
       }
-      if (s.upstream !== null) {
+      if (snapshot.upstream !== null) {
         bar.child(div().flex_none().text_color(t.dim).child("→"));
-        bar.child(div().flex_shrink(1).min_w(0).truncate().text_color(t.muted).child(s.upstream));
+        bar.child(div().flex_shrink(1).min_w(0).truncate().text_color(t.muted).child(snapshot.upstream));
       }
-      if (s.ahead !== null && s.behind !== null) bar.child(aheadBehindPill(t, s.ahead, s.behind));
-      if (s.unborn) bar.child(div().flex_none().text_size(11).text_color(t.dim).child("no commits yet"));
-      if (s.operation !== "none") bar.child(operationBadge(t, s.operation));
+      if (snapshot.ahead !== null && snapshot.behind !== null) bar.child(aheadBehindPill(t, snapshot.ahead, snapshot.behind));
+      if (snapshot.unborn) bar.child(div().flex_none().text_size(11).text_color(t.dim).child("no commits yet"));
+      if (snapshot.operation !== "none") bar.child(operationBadge(t, snapshot.operation));
     } else {
       bar.child(div().min_w(0).truncate().text_color(t.muted).child("Source Control"));
     }
     return bar
       .child(div().flex_1())
-      .child(
-        div().id("refresh").flex_none().w(22).h(22).flex().items_center().justify_center().rounded(4)
-          .text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click((_e, cx) => {
-            cx.stop_propagation();
-            this.refresh();
-          })
-          .child("⟳"),
-      )
-      .child(
-        div().id("close").flex_none().w(22).h(22).flex().items_center().justify_center().rounded(4)
-          .text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .on_click((_e, cx) => {
-            cx.stop_propagation();
-            run("layout.hide", { id: LAYOUT_ID });
-          })
-          .child("✕"),
-      );
+      .child(iconButton(t, "refresh", "⟳", () => this.refresh()))
+      .child(iconButton(t, "close", "✕", () => run("layout.hide", { id: LAYOUT_ID })));
   }
 
   /** @param {Record<string, string>} t @param {any} state */
@@ -370,12 +355,12 @@ export class SourceControlPanel {
         return screen(t, "Loading…", "");
       case "ready": {
         const { repository } = state;
-        const s = repository.snapshot;
-        if (!s) return screen(t, "Couldn't read the repository", repository.key.toplevel);
-        this.selection = settleSelection(listRows(s.groups), this.selection);
+        const snapshot = repository.snapshot;
+        if (!snapshot) return screen(t, "Couldn't read the repository", repository.key.toplevel);
+        this.selection = settleSelection(listRows(snapshot.groups), this.selection);
         /** @type {Actions} */
         const actions = {
-          busy: s.running !== null,
+          busy: snapshot.running !== null,
           // Nothing is staged except what the user ticks. Results land in snapshot.lastError.
           stage: (changes) => void repository.stage(changes.map((c) => c.path)),
           unstage: (changes) => void repository.unstage(changes.flatMap(pathsOf)),
@@ -383,7 +368,7 @@ export class SourceControlPanel {
           unstageAll: () => this.unstageAll(),
           open: (change) => {
             // A clicked row becomes the selected one, so the keys carry on from there.
-            this.selection = settleSelection(listRows(s.groups), { key: rowKey(change), index: 0 });
+            this.selection = settleSelection(listRows(snapshot.groups), { key: rowKey(change), index: 0 });
             openDiff(diffTargetFor(repository.key, change));
           },
           selectedKey: this.selection?.key ?? null,
@@ -395,11 +380,11 @@ export class SourceControlPanel {
           },
         };
         return v_flex().flex_1().min_h(0)
-          .when(s.running !== null, (e) => e.child(runningStrip(t, s.running.label)))
-          .when(s.lastError !== null, (e) => e.child(this.errorStrip(t, s.lastError)))
-          .when(s.watchError !== null, (e) => e.child(watchBand(t, s.watchError)))
-          .child(changeLists(t, s.groups, actions))
-          .child(this.commitBox(t, s));
+          .when(snapshot.running !== null, (e) => e.child(runningStrip(t, snapshot.running.label)))
+          .when(snapshot.lastError !== null, (e) => e.child(this.errorStrip(t, snapshot.lastError)))
+          .when(snapshot.watchError !== null, (e) => e.child(watchBand(t, snapshot.watchError)))
+          .child(changeLists(t, snapshot.groups, actions))
+          .child(this.commitBox(t, snapshot));
       }
       default:
         return div();
@@ -409,11 +394,11 @@ export class SourceControlPanel {
   /**
    * The commit box at the bottom: the message, a status line ("N file(s) ready" or
    * why commit is blocked) and the Commit to <branch> button.
-   * @param {Record<string, string>} t @param {import("../core/repository.js").Snapshot} s
+   * @param {Record<string, string>} t @param {import("../core/repository.js").Snapshot} snapshot
    */
-  commitBox(t, s) {
-    const { ready, status } = commitReadiness(s.groups, this.message.value());
-    const enabled = ready && s.running === null;
+  commitBox(t, snapshot) {
+    const { ready, status } = commitReadiness(snapshot.groups, this.message.value());
+    const enabled = ready && snapshot.running === null;
     return v_flex().id("commit-box").flex_none().p(10).gap(6).border_t_1().border_color(t.border).bg(t.chrome)
       // Fallback for Ctrl+Enter in case the textarea doesn't report it as a secondary submit.
       .on_key_down((e, cx) => {
@@ -433,7 +418,7 @@ export class SourceControlPanel {
               cx.stop_propagation();
               this.commit();
             }))
-          .child(`Commit to ${s.branch ?? "detached HEAD"}`)));
+          .child(`Commit to ${snapshot.branch ?? "detached HEAD"}`)));
   }
 
   /**
@@ -445,8 +430,7 @@ export class SourceControlPanel {
       this.shownError = error;
       this.showDetail = false;
     }
-    const strip = v_flex().id("last-error").flex_none().px(10).py(6).gap(4).text_size(11)
-      .bg(t.ansi1 + "22").text_color(t.ansi1).border_b_1().border_color(t.border)
+    const strip = band(t, t.ansi1).id("last-error").flex().flex_col().px(10).py(6).gap(4)
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().child(error.summary))
         .when(error.detail !== error.summary, (e) => e.child(
@@ -514,8 +498,7 @@ function changeLists(t, groups, actions) {
  * @param {Record<string, string>} t @param {number} count
  */
 function conflictBanner(t, count) {
-  return div().id("conflict-banner").flex_none().px(10).py(6).text_size(11)
-    .bg(t.ansi1 + "22").text_color(t.ansi1).border_b_1().border_color(t.border)
+  return band(t, t.ansi1).id("conflict-banner").px(10).py(6)
     .child(`${count} conflict(s): fix them in your editor, then tick to mark resolved`);
 }
 
@@ -524,8 +507,7 @@ function conflictBanner(t, count) {
  * @param {Record<string, string>} t @param {string} reason
  */
 function watchBand(t, reason) {
-  return div().id("watch-error").flex_none().px(10).py(6).text_size(11)
-    .bg(t.ansi3 + "22").text_color(t.ansi3).border_b_1().border_color(t.border).truncate()
+  return band(t, t.ansi3).id("watch-error").px(10).py(6).truncate()
     .child(`Not watching for changes (${reason}) · ⟳ or focus refreshes`);
 }
 
