@@ -28,6 +28,7 @@ export const DEBOUNCE_MS = 400;
  *   groups: import("./status.js").ChangeGroups,
  *   running: import("./queue.js").QueueEntry | null,
  *   lastError: ActionError | null,
+ *   watchError: string | null,
  * }>} Snapshot
  */
 
@@ -117,6 +118,8 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
   let snapshot = null;
   /** @type {ActionError | null} */
   let lastError = null;
+  /** Why the file watch stopped, or null while it runs (or when nothing is watched). @type {string | null} */
+  let watchError = null;
   let disposed = false;
   /** @type {Set<() => void>} */
   const listeners = new Set();
@@ -124,7 +127,7 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
   /** Rebuilds the snapshot from the latest status, the queue and lastError, and tells listeners. */
   function publish() {
     if (!status) return;
-    snapshot = Object.freeze({ ...status, running: queue.running, lastError });
+    snapshot = Object.freeze({ ...status, running: queue.running, lastError, watchError });
     for (const fn of [...listeners]) fn();
   }
   const offQueue = queue.subscribe(publish);
@@ -195,7 +198,13 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
           if (disposed) return;
           if (batch.some((p) => isRelevant(p, dirs))) schedule();
         }
-      })().catch(() => {});
+      })().catch((err) => {
+        // The watch stopped (e.g. Herdr's 64-folder limit). Say so; refreshes
+        // still come from actions, focus and the refresh button.
+        if (disposed) return;
+        watchError = String(err?.message ?? err);
+        publish();
+      });
     }
   }
 

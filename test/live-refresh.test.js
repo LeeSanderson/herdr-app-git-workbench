@@ -15,7 +15,7 @@ const settle = () => new Promise((r) => setImmediate(r));
  * else is real. `watches` records every watch made: `{path, fire(paths), cancelled}`.
  */
 function fakePlatform() {
-  /** @type {{ path: string, fire(paths: string[]): void, cancelled: boolean }[]} */
+  /** @type {{ path: string, fire(paths: string[]): void, fail(err: Error): void, cancelled: boolean }[]} */
   const watches = [];
   /** @type {(() => void)[]} */
   const sleepers = [];
@@ -24,6 +24,7 @@ function fakePlatform() {
     watch(dir) {
       const queue = [];
       let wake = null;
+      let failure = null;
       const w = {
         path: dir,
         cancelled: false,
@@ -31,13 +32,19 @@ function fakePlatform() {
           queue.push(paths);
           wake?.();
         },
+        /** Makes the watch reject, as watchFolder does past its folder limit. */
+        fail(err) {
+          failure = err;
+          wake?.();
+        },
       };
       watches.push(w);
       return {
         events: (async function* () {
           while (!w.cancelled) {
-            if (!queue.length) await new Promise((r) => (wake = r));
+            if (!queue.length && !failure) await new Promise((r) => (wake = r));
             wake = null;
+            if (failure) throw failure;
             while (queue.length && !w.cancelled) yield queue.shift();
           }
         })(),
@@ -111,6 +118,33 @@ test("a file edited in the working tree refreshes the panel", async () => {
 
   assert.equal(counter.refreshes, 1);
   assert.deepEqual(counter.repository.snapshot.groups.changes.map((c) => c.path), ["README.md"]);
+});
+
+// Herdr's watchFolder on Windows reports verbatim paths (`\\?\C:\...`) while Git
+// prints `C:/...`: seen in the running app, where no edit ever refreshed the panel.
+test("an event path in Windows' verbatim form (\\\\?\\C:\\...) refreshes the panel", { skip: process.platform !== "win32" }, async () => {
+  const fake = fakePlatform();
+  const root = initRepo();
+  const counter = await followCounting(fake, root);
+
+  write(root, "README.md", "edited\n");
+  watchOf(fake, root).fire([`\\\\?\\${path.join(root, "README.md")}`]);
+  await untilRefreshed(fake, counter);
+
+  assert.equal(counter.refreshes, 1);
+  assert.deepEqual(counter.repository.snapshot.groups.changes.map((c) => c.path), ["README.md"]);
+});
+
+test("a watch that fails is reported in the snapshot, not swallowed", async () => {
+  const fake = fakePlatform();
+  const root = initRepo();
+  const counter = await followCounting(fake, root);
+  assert.equal(counter.repository.snapshot.watchError, null);
+
+  watchOf(fake, root).fail(new Error("too many folders are being watched"));
+  await untilRefreshed(fake, counter);
+
+  assert.match(counter.repository.snapshot.watchError, /too many folders/);
 });
 
 test("Git commands run in a terminal refresh the panel through the git dir", async () => {

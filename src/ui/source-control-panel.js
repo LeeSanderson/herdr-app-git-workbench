@@ -387,6 +387,7 @@ export class SourceControlPanel {
         return v_flex().flex_1().min_h(0)
           .when(s.running !== null, (e) => e.child(runningStrip(t, s.running.label)))
           .when(s.lastError !== null, (e) => e.child(this.errorStrip(t, s.lastError)))
+          .when(s.watchError !== null, (e) => e.child(watchBand(t, s.watchError)))
           .child(changeLists(t, s.groups, actions))
           .child(this.commitBox(t, s));
       }
@@ -506,6 +507,16 @@ function conflictBanner(t, count) {
   return div().id("conflict-banner").flex_none().px(10).py(6).text_size(11)
     .bg(t.ansi1 + "22").text_color(t.ansi1).border_b_1().border_color(t.border)
     .child(`${count} conflict(s): fix them in your editor, then tick to mark resolved`);
+}
+
+/**
+ * Shown once the file watch has stopped: the panel no longer sees outside edits by itself.
+ * @param {Record<string, string>} t @param {string} reason
+ */
+function watchBand(t, reason) {
+  return div().id("watch-error").flex_none().px(10).py(6).text_size(11)
+    .bg(t.ansi3 + "22").text_color(t.ansi3).border_b_1().border_color(t.border).truncate()
+    .child(`Not watching for changes (${reason}) · ⟳ or focus refreshes`);
 }
 
 /** `↑ahead ↓behind` against the upstream. @param {Record<string, string>} t @param {number} ahead @param {number} behind */

@@ -9,7 +9,8 @@
 
 /**
  * A recursive folder watch. `events` yields batches of absolute changed paths
- * until `cancel()` is called.
+ * until `cancel()` is called, and throws if the watch fails. On Windows, Herdr's
+ * paths are in verbatim form (`\\?\C:\...`); watch-filter.js accepts both forms.
  * @typedef {{ events: AsyncIterable<string[]>, cancel(): void }} Watch
  */
 

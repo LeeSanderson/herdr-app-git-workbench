@@ -1,13 +1,18 @@
 // @ts-check
 // Which file-watch events should refresh a Repository, and which folders to watch.
-// Git prints `C:/x/y`; watchers report `C:\x\y`. Paths are compared normalised
-// (forward slashes, no trailing slash, case-folded when they start with a drive letter).
+// Git prints `C:/x/y`; watchers report `C:\x\y`, and Herdr's watchFolder on Windows
+// reports the verbatim form `\\?\C:\x\y` (`\\?\UNC\server\share\...` for shares).
+// Paths are compared normalised (no verbatim prefix, forward slashes, no trailing
+// slash, case-folded when they start with a drive letter).
 
 /** @typedef {{ root: string, gitDir: string, commonDir: string }} RepositoryDirs */
 
 /** @param {string} p */
 function norm(p) {
-  return p.replace(/\\/g, "/").replace(/\/+$/, "");
+  return p.replace(/\\/g, "/")
+    .replace(/^\/\/\?\/UNC\//i, "//")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/+$/, "");
 }
 
 /** Folds case on Windows drive paths, for comparing folder prefixes. @param {string} p */
