@@ -17,6 +17,7 @@ export const PAGE_SIZE = 50;
  *   subject: string,
  *   message: string,
  *   refs: readonly string[],
+ *   badges: readonly RefBadge[],
  * }>} Commit
  */
 
@@ -48,7 +49,8 @@ export function parseHistory(stdout) {
   /** @type {Commit[]} */
   const commits = [];
   for (let i = 0; i + FIELDS <= fields.length; i += FIELDS) {
-    const [oid, parents, authorName, authorEmail, authorDate, refs, subject, message] = fields.slice(i, i + FIELDS);
+    const [oid, parents, authorName, authorEmail, authorDate, decorations, subject, message] = fields.slice(i, i + FIELDS);
+    const refs = decorations.split(", ").map((r) => r.trim()).filter(Boolean);
     commits.push(Object.freeze({
       // Every record after the first starts right after the previous message's NUL;
       // git may add a newline between records.
@@ -59,10 +61,42 @@ export function parseHistory(stdout) {
       authorDate,
       subject,
       message,
-      refs: Object.freeze(refs.split(", ").map((r) => r.trim()).filter(Boolean)),
+      refs: Object.freeze(refs),
+      badges: Object.freeze(refBadges(refs)),
     }));
   }
   return commits;
+}
+
+/**
+ * One Ref on a commit. `head` is HEAD: named after its branch when attached, "HEAD"
+ * when detached (the attached branch gets no separate local badge).
+ * @typedef {Readonly<{ kind: "head" | "local" | "remote" | "tag", name: string }>} RefBadge
+ */
+
+const BADGE_ORDER = ["head", "local", "remote", "tag"];
+
+/**
+ * The badges for a commit's full decorations, HEAD first, then local branches,
+ * remote branches and tags (each in git's order). A remote's symbolic HEAD
+ * (`origin/HEAD`), stash and any other refs (notes, `refs/pull/*`) get none.
+ * @param {readonly string[]} refs @returns {RefBadge[]}
+ */
+export function refBadges(refs) {
+  /** @type {RefBadge[]} */
+  const out = [];
+  for (const ref of refs) {
+    /** @type {RefBadge | null} */
+    let badge = null;
+    let m;
+    if (ref === "HEAD") badge = { kind: "head", name: "HEAD" };
+    else if ((m = /^HEAD -> refs\/heads\/(.+)$/.exec(ref))) badge = { kind: "head", name: m[1] };
+    else if ((m = /^tag: refs\/tags\/(.+)$/.exec(ref))) badge = { kind: "tag", name: m[1] };
+    else if ((m = /^refs\/heads\/(.+)$/.exec(ref))) badge = { kind: "local", name: m[1] };
+    else if ((m = /^refs\/remotes\/(.+)$/.exec(ref)) && !/^[^/]+\/HEAD$/.test(m[1])) badge = { kind: "remote", name: m[1] };
+    if (badge) out.push(Object.freeze(badge));
+  }
+  return out.sort((a, b) => BADGE_ORDER.indexOf(a.kind) - BADGE_ORDER.indexOf(b.kind));
 }
 
 /** Whether a decoration list says this commit is HEAD. @param {readonly string[]} refs */
