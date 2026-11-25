@@ -130,6 +130,9 @@ export function createGraph({ git, key, status }) {
   const shown = (oid) => (state.kind === "ready" ? state.commits.find((c) => c.oid === oid) : undefined);
 
   return {
+    /** The Repository's key, for the Diff targets of commit files. */
+    key,
+
     /** @returns {GraphState} */
     get state() {
       return state;
