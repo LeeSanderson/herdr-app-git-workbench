@@ -15,10 +15,11 @@ import { nameOf } from "./status.js";
  *   right: Side,
  *   oldPath: string,
  *   newPath: string,
- *   group: Change["group"],
+ *   group: Change["group"] | "commit",
  *   status: Change["status"],
  * }} DiffTarget
  * `group` and `status` are extras for the Diff view's header (badge and letter).
+ * A commit file's group is "commit"; its right side is the commit's full oid.
  */
 
 /** @type {Record<string, [Side, Side]>} */
@@ -48,6 +49,27 @@ export function diffTargetFor(key, change) {
 }
 
 /**
+ * The Diff target that shows one changed file of a commit: from its first
+ * parent's full oid (EMPTY for a root commit or shallow boundary) to the
+ * commit's full oid. A merge is compared with its first parent. Pure.
+ * @param {RepositoryKey} key
+ * @param {{ oid: string, parents: readonly string[] }} commit
+ * @param {import("./commit-files.js").CommitFile} file
+ * @returns {DiffTarget}
+ */
+export function commitFileTarget(key, commit, file) {
+  return {
+    repository: { ...repositoryKey(key) },
+    left: commit.parents[0] ?? "EMPTY",
+    right: commit.oid,
+    oldPath: file.oldPath ?? file.path,
+    newPath: file.path,
+    group: "commit",
+    status: file.status,
+  };
+}
+
+/**
  * A stable string for a Diff target, for the tab registry. Staged and unstaged
  * diffs of one file differ by sides, so they get different keys.
  * @param {DiffTarget} t
@@ -61,5 +83,6 @@ export function targetKey(t) {
  * @param {DiffTarget} t
  */
 export function tabName(t) {
+  if (t.group === "commit") return `Δ ${nameOf(t.newPath)} (${t.right.slice(0, 7)})`;
   return `Δ ${nameOf(t.newPath)}${t.right === "INDEX" ? " (staged)" : ""}`;
 }

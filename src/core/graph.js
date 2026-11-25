@@ -9,6 +9,7 @@
 
 import { historyArgs, parseHistory, isHeadCommit, PAGE_SIZE } from "./history.js";
 import { layoutLanes } from "./lanes.js";
+import { commitFilesArgs, parseCommitFiles } from "./commit-files.js";
 import { createSignal, coalesce } from "./signal.js";
 import { actionError, messageOf } from "./errors.js";
 import { repositoryId } from "./repository-key.js";
@@ -16,6 +17,13 @@ import { repositoryId } from "./repository-key.js";
 /** @typedef {import("./history.js").Commit} Commit */
 /** @typedef {import("./lanes.js").LaneRow} LaneRow */
 /** @typedef {import("./errors.js").ActionError} ActionError */
+/** @typedef {import("./commit-files.js").CommitFile} CommitFile */
+/**
+ * One commit's changed files, as fetched on its first expand.
+ * @typedef {Readonly<{ kind: "loading" }
+ *   | { kind: "ready", files: readonly CommitFile[] }
+ *   | { kind: "error", error: ActionError }>} CommitFiles
+ */
 /**
  * Which Refs the Graph starts from: HEAD and its Upstream, every branch, remote
  * branch and tag, or HEAD only.
@@ -78,6 +86,11 @@ export function createGraph({ git, key, status, settings }) {
   let disposed = false;
   const changes = createSignal();
 
+  /** Oids of expanded commits. Kept across loads; an oid no longer shown just doesn't render. */
+  let expanded = /** @type {ReadonlySet<string>} */ (Object.freeze(new Set()));
+  /** A commit's files by oid. Ready lists are kept for good (commits are immutable). @type {Map<string, CommitFiles>} */
+  const files = new Map();
+
   /** @param {GraphState} next */
   function set(next) {
     if (disposed) return;
@@ -111,9 +124,47 @@ export function createGraph({ git, key, status, settings }) {
     }
   }
 
+  /** @param {ReadonlySet<string>} next */
+  function setExpanded(next) {
+    if (disposed) return;
+    expanded = Object.freeze(next);
+    changes.emit();
+  }
+
+  /**
+   * Loads a commit's files unless they are ready or loading. A failure is kept
+   * until the next expand, which retries.
+   * @param {{ oid: string, parents: readonly string[] }} commit
+   */
+  async function readFiles(commit) {
+    const known = files.get(commit.oid);
+    if (known && known.kind !== "error") return;
+    files.set(commit.oid, Object.freeze({ kind: "loading" }));
+    changes.emit();
+    /** @type {CommitFiles} */
+    let next;
+    try {
+      const r = await git.run(key.machine, commitFilesArgs(commit), { cwd: key.toplevel, read: true });
+      next = r.ok
+        ? { kind: "ready", files: Object.freeze(parseCommitFiles(r.stdout)) }
+        : { kind: "error", error: actionError(r.stderr, "git diff-tree failed") };
+    } catch (err) {
+      next = { kind: "error", error: { summary: messageOf(err), detail: messageOf(err) } };
+    }
+    if (disposed) return;
+    files.set(commit.oid, Object.freeze(next));
+    changes.emit();
+  }
+
+  /** The shown commit with this oid, if any. @param {string} oid */
+  const shown = (oid) => (state.kind === "ready" ? state.commits.find((c) => c.oid === oid) : undefined);
+
   const load = coalesce(read);
 
   return {
+    /** The Repository's key, for the Diff targets of commit files. */
+    key,
+
     /** @returns {GraphState} */
     get state() {
       return state;
@@ -149,6 +200,50 @@ export function createGraph({ git, key, status, settings }) {
     /** True once loaded at least once (whatever the outcome), so reloads are worth running. */
     get started() {
       return state.kind !== "idle";
+    },
+
+    /** Oids of the expanded commits (a frozen set, replaced on every change). */
+    get expanded() {
+      return expanded;
+    },
+
+    /** @param {string} oid */
+    isExpanded(oid) {
+      return expanded.has(oid);
+    },
+
+    /**
+     * Expands a shown commit, loading its files on the first expand. Does nothing
+     * for an oid that isn't shown. Resolves once its files are known.
+     * @param {string} oid @returns {Promise<void>}
+     */
+    async expand(oid) {
+      const commit = shown(oid);
+      if (!commit) return;
+      if (!expanded.has(oid)) setExpanded(new Set([...expanded, oid]));
+      await readFiles(commit);
+    },
+
+    /** @param {string} oid */
+    collapse(oid) {
+      if (!expanded.has(oid)) return;
+      const next = new Set(expanded);
+      next.delete(oid);
+      setExpanded(next);
+    },
+
+    /** Expands a collapsed commit or collapses an expanded one. @param {string} oid @returns {Promise<void>} */
+    async toggle(oid) {
+      if (expanded.has(oid)) this.collapse(oid);
+      else await this.expand(oid);
+    },
+
+    /**
+     * A commit's changed files: loading, ready or failed; null before its first expand.
+     * @param {string} oid @returns {CommitFiles | null}
+     */
+    files(oid) {
+      return files.get(oid) ?? null;
     },
 
     dispose() {

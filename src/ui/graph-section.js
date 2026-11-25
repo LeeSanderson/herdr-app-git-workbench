@@ -6,7 +6,13 @@
 import { div, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, v_resizable, resizable_panel, Scrollbar } from "gpui-base";
 import { rowWidth } from "../core/lanes.js";
+import { graphItems } from "../core/graph-items.js";
+import { commitFileTarget } from "../core/diff-target.js";
+import { folderOf, nameOf } from "../core/status.js";
+import { openDiff } from "./diff-tabs.js";
+import { statusColor, printable } from "./widgets.js";
 
+/** @typedef {import("../core/graph-items.js").GraphItem} GraphItem */
 /** @typedef {import("../core/graph.js").Graph} Graph */
 /** @typedef {import("../core/graph.js").GraphState} GraphState */
 /** @typedef {import("../core/history.js").Commit} Commit */
@@ -17,6 +23,10 @@ const SPLIT_ID = "scm-graph-split";
 const LIST_ID = "graph-rows";
 const HEADER_H = 28;
 const COMMIT_H = 40;
+const FILE_H = 22;
+const DETAIL_LINE_H = 16;
+/** Indent of detail and file text: under the commit's chevron. */
+const INDENT = 14;
 const LANE_W = 12;
 const STROKE = 2;
 
@@ -135,7 +145,7 @@ function body(t, graph) {
           })
           .child("Retry")));
     case "ready":
-      return list(t, state);
+      return list(t, graph, state);
   }
 }
 
@@ -145,17 +155,35 @@ function note(t, content) {
 }
 
 /**
- * The commit rows in a virtual list. Rows hold no handlers or state.
- * @param {Record<string, string>} t @param {Extract<GraphState, { kind: "ready" }>} state
+ * The commit rows in a virtual list, with the detail block and file rows of each
+ * expanded commit. Rows hold no handlers or state: clicks are handled here, by key.
+ * @param {Record<string, string>} t @param {Graph} graph @param {Extract<GraphState, { kind: "ready" }>} state
  */
-function list(t, state) {
+function list(t, graph, state) {
   const { commits, rows, head } = state;
   const now = Date.now();
-  const vl = v_virtual_list(LIST_ID, commits.length, COMMIT_H, (i) => `c:${commits[i].oid}`,
+  const items = graphItems(commits, graph.expanded, (oid) => graph.files(oid));
+  const sizes = items.map((it) => itemHeight(it, commits[it.index]));
+  /** @type {Map<string, GraphItem>} */
+  const byKey = new Map(items.map((it) => [it.key, it]));
+  const vl = v_virtual_list(LIST_ID, items.length, sizes, (i) => items[i].key,
     (range) => {
       const out = [];
-      for (let i = range.start; i < range.end; i++) out.push(commitRow(t, commits[i], rows[i], commits[i].oid === head, now));
+      for (let i = range.start; i < range.end; i++) {
+        const it = items[i];
+        const c = commits[it.index];
+        const row = rows[it.index];
+        if (it.kind === "commit") out.push(commitRow(t, c, row, c.oid === head, now, graph.isExpanded(c.oid)));
+        else out.push(innerRow(t, it, c, row, sizes[i]));
+      }
       return out;
+    })
+    .on_item_click((key, cx) => {
+      const it = byKey.get(key);
+      if (!it) return;
+      if (it.kind === "commit") void graph.toggle(it.oid);
+      else if (it.kind === "file") openDiff(commitFileTarget(graph.key, commits[it.index], it.file));
+      cx.notify();
     })
     .size_full();
   return div().flex_1().min_h(0).relative()
@@ -163,15 +191,99 @@ function list(t, state) {
     .child(Scrollbar.vertical(LIST_ID).absolute().inset_0());
 }
 
+/** The body lines of a commit message: everything after the subject and its blank line. @param {Commit} c */
+function bodyLines(c) {
+  const lines = c.message.replace(/\s+$/, "").split("\n").slice(1);
+  while (lines.length && lines[0].trim() === "") lines.shift();
+  return lines;
+}
+
+/** @param {GraphItem} it @param {Commit} c */
+function itemHeight(it, c) {
+  if (it.kind === "commit") return COMMIT_H;
+  if (it.kind === "detail") {
+    const body = bodyLines(c);
+    return 8 + (4 + (body.length ? body.length + 1 : 0)) * DETAIL_LINE_H;
+  }
+  return FILE_H;
+}
+
+/** "2026-11-25T10:04:00+01:00" → "2026-11-25 10:04:00 +01:00". @param {string} iso */
+const absoluteDate = (iso) => iso.replace("T", " ").replace(/([+-]\d\d:\d\d|Z)$/, " $1");
+
+/**
+ * A row under an expanded commit: its detail block, a file, or the files' loading
+ * or error status. The commit's lanes carry on through it.
+ * @param {Record<string, string>} t @param {Exclude<GraphItem, { kind: "commit" }>} it @param {Commit} c
+ * @param {LaneRow} row @param {number} h
+ */
+function innerRow(t, it, c, row, h) {
+  const base = h_flex().w_full().h(h).flex_none().gap(6).pr(8).overflow_hidden().bg(t.chrome)
+    .child(passThroughCell(t, row, h));
+  if (it.kind === "detail") {
+    const parents = c.parents.length;
+    const body = bodyLines(c);
+    /** @type {[string, string, boolean][]} */
+    const lines = [
+      [c.subject, t.foreground, true],
+      [c.oid, t.dim, false],
+      [`${c.authorName} <${c.authorEmail}>`, t.muted, false],
+      [`${absoluteDate(c.authorDate)} · ${parents} parent${parents === 1 ? "" : "s"}`, t.muted, false],
+      ...(body.length ? [/** @type {[string, string, boolean]} */ (["", t.dim, false]), ...body.map((l) => /** @type {[string, string, boolean]} */ ([l, t.foreground, false]))] : []),
+    ];
+    return base.items_start().child(v_flex().flex_1().min_w(0).py(4).pl(INDENT)
+      .children(lines.map(([text, color, bold]) => div().h(DETAIL_LINE_H).truncate().text_size(11).text_color(color)
+        .when(bold, (e) => e.font_semibold()).child(printable(text) || " "))));
+  }
+  if (it.kind === "status") {
+    const files = it.files;
+    return base.items_center().text_size(11).child(div().flex_none().w(INDENT))
+      .child(files.kind === "error"
+        ? div().flex_1().min_w(0).truncate().text_color(t.ansi1).child(files.error.summary)
+        : h_flex().gap(6).text_color(t.dim)
+          .child(div().text_color(t.muted).frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80))
+          .child("Loading files…"));
+  }
+  const f = it.file;
+  return base.items_center().text_size(12).cursor_pointer().hover((s) => s.bg(t.hover))
+    .child(div().flex_none().w(INDENT))
+    .child(div().flex_none().w(12).text_size(11).font_semibold().text_color(statusColor(t, { status: f.status, group: "staged" })).child(f.status))
+    .child(div().flex_none().child(printable(nameOf(f.path))))
+    .child(div().flex_shrink(1).min_w(0).truncate().text_size(11).text_color(t.dim)
+      .child(printable(folderOf(f.path)) + (f.oldPath ? `  ← ${printable(f.oldPath)}` : "")));
+}
+
+/**
+ * The lane drawing under a commit's row: every lane leaving it runs straight down.
+ * @param {Record<string, string>} t @param {LaneRow} row @param {number} h
+ */
+function passThroughCell(t, row, h) {
+  const colors = palette(t);
+  /** @type {Map<number, any>} */
+  const builders = new Map();
+  row.outgoing.forEach((oid, i) => {
+    if (oid === null) return;
+    const k = i % colors.length;
+    if (!builders.has(k)) builders.set(k, PathBuilder.stroke(STROKE));
+    builders.get(k).move_to(laneX(i), 0).line_to(laneX(i), h);
+  });
+  const cell = div().relative().flex_none().w(rowWidth(row) * LANE_W + 4).h(h);
+  const paint = /** @type {any} */ (globalThis).window;
+  for (const [k, b] of builders) cell.child(paint.paint_path(b.build(), colors[k]).absolute().top(0).left(0).size_full());
+  return cell;
+}
+
 /**
  * One commit: the graph cell, then the subject (bold for HEAD) over the short oid,
  * author, relative date and a `merge` marker.
  * @param {Record<string, string>} t @param {Commit} c @param {LaneRow} row @param {boolean} isHead @param {number} now
+ * @param {boolean} expanded
  */
-function commitRow(t, c, row, isHead, now) {
+function commitRow(t, c, row, isHead, now, expanded) {
   const merge = c.parents.length > 1;
-  return h_flex().w_full().h(COMMIT_H).flex_none().items_center().gap(6).pr(8).overflow_hidden()
+  return h_flex().w_full().h(COMMIT_H).flex_none().items_center().gap(6).pr(8).overflow_hidden().cursor_pointer()
     .child(graphCell(t, row, COMMIT_H, isHead, merge))
+    .child(div().flex_none().w(10).text_size(10).text_color(t.muted).child(expanded ? "▾" : "▸"))
     .child(v_flex().flex_1().min_w(0).gap(1)
       .child(h_flex().min_w(0).gap(4).items_center()
         .children(badges(t, c.badges, laneColor(t, row.lane)))

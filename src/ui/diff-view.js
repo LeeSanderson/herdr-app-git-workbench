@@ -306,7 +306,8 @@ export class DiffView {
    */
   header(t, target, mode) {
     const color = statusColor(t, target);
-    const [label, slot] = BADGES[target.group] ?? ["", "muted"];
+    // A commit file's badge is the commit's short oid.
+    const [label, slot] = target.group === "commit" ? [target.right.slice(0, 7), "ansi4"] : BADGES[target.group] ?? ["", "muted"];
     const path = printable(target.newPath);
     const what = h_flex().flex_1().min_w(0).gap(8).items_center().overflow_hidden()
       .child(div().flex_none().w(18).h(18).rounded(4).bg(color + "33").flex().items_center().justify_center()
