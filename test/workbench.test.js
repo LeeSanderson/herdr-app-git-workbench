@@ -66,6 +66,22 @@ test("when follows overlap, the latest one wins", async () => {
   assert.equal(workbench.state.repository.snapshot.branch, "b");
 });
 
+// Every panel copy shares the one Workbench, so a copy that was hidden while another
+// followed elsewhere must ask the Workbench, not remember what it followed itself.
+test("isFollowing names the place the latest follow asked for", async () => {
+  const a = initRepo({ branch: "a" });
+  const b = initRepo({ branch: "b" });
+  const workbench = createWorkbench(nodePlatform);
+  assert.equal(workbench.isFollowing({ machine: null, folder: a }), false);
+  await workbench.follow({ machine: null, folder: a });
+  assert.equal(workbench.isFollowing({ machine: null, folder: a }), true);
+  const pending = workbench.follow({ machine: null, folder: b });
+  assert.equal(workbench.isFollowing({ machine: null, folder: a }), false, "another copy moved the Workbench on");
+  assert.equal(workbench.isFollowing({ machine: null, folder: b }), true);
+  await pending;
+  assert.equal(workbench.isFollowing({ machine: "box", folder: b }), false, "the machine counts");
+});
+
 test("subscribers hear each state change", async () => {
   const folder = initRepo();
   const workbench = createWorkbench(nodePlatform);

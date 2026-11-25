@@ -27,6 +27,20 @@
  */
 
 /**
+ * Whether a Change can be discarded: unstaged edits and untracked files only,
+ * never staged Changes or Conflicts.
+ * @param {Change} change
+ */
+export const isDiscardable = (change) => change.group === "changes" || change.group === "untracked";
+
+/**
+ * The Unstaged list in the order the panel shows it: Conflicts, Changes, Untracked.
+ * @param {ChangeGroups} groups
+ * @returns {Change[]}
+ */
+export const unstagedChanges = (groups) => [...groups.conflicts, ...groups.changes, ...groups.untracked];
+
+/**
  * @param {string} stdout
  * @returns {Status}
  */

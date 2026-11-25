@@ -293,29 +293,38 @@ export class DiffView {
       .child(v_flex().flex_1().min_h(0).font_family(settings().font_family ?? "monospace").text_size(fontSize()).child(this.body(t, mode)));
   }
 
-  /** @param {Record<string, string>} t @param {DiffTarget} target @param {RowMode} mode */
+  /**
+   * The header: what is compared on the left, the controls on the right. At narrow
+   * widths the left part gives way first (old path, then folder, then the file
+   * name truncate), so the badge stays readable and the controls stay on screen.
+   * @param {Record<string, string>} t @param {DiffTarget} target @param {RowMode} mode
+   */
   header(t, target, mode) {
     const color = statusColor(t, target);
     const [label, slot] = BADGES[target.group] ?? ["", "muted"];
     const path = printable(target.newPath);
-    const bar = h_flex().flex_none().h(34).px(12).gap(8).items_center().border_b_1().border_color(t.border).bg(t.surface)
+    const what = h_flex().flex_1().min_w(0).gap(8).items_center().overflow_hidden()
       .child(div().flex_none().w(18).h(18).rounded(4).bg(color + "33").flex().items_center().justify_center()
         .text_size(10).font_semibold().text_color(color).child(statusLetter(target)))
-      .child(h_flex().min_w(0).flex_shrink(1)
-        .child(div().flex_shrink(1).min_w(0).truncate().text_color(t.dim).child(folderOf(path)))
-        .child(div().flex_none().font_semibold().child(nameOf(path))));
+      .child(h_flex().min_w(48).flex_shrink(1).overflow_hidden()
+        .child(div().flex_shrink(100).min_w(0).truncate().text_color(t.dim).child(folderOf(path)))
+        .child(div().flex_shrink(1).min_w(48).truncate().font_semibold().child(nameOf(path))));
     if (target.oldPath !== target.newPath) {
       const similarity = this.doc?.similarity != null ? ` (${this.doc.similarity}%)` : "";
-      bar.child(div().flex_shrink(1).min_w(0).truncate().text_color(t.dim).child(`← ${printable(target.oldPath)}${similarity}`));
+      what.child(div().flex_shrink(1000).min_w(0).truncate().text_color(t.dim).child(`← ${printable(target.oldPath)}${similarity}`));
     }
-    bar.child(div().flex_none().px(6).rounded(4).text_size(10).bg(t[slot] + "33").text_color(t[slot]).child(label));
+    what.child(div().flex_none().px(6).rounded(4).text_size(10).bg(t[slot] + "33").text_color(t[slot]).child(label));
     if (this.doc) {
-      bar.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${this.doc.adds}`))
+      what.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${this.doc.adds}`))
         .child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${this.doc.dels}`));
     }
-    bar.child(div().flex_1());
-    if (this.doc) bar.child(this.navigator(t, mode));
-    return bar.child(this.modeSwitch(t, mode)).child(this.reloadButton(t));
+    const controls = h_flex().flex_none().gap(8).items_center();
+    if (this.doc) controls.child(this.navigator(t, mode));
+    controls.child(this.modeSwitch(t, mode)).child(this.reloadButton(t));
+    return h_flex().flex_none().h(34).px(12).gap(8).items_center().overflow_hidden()
+      .border_b_1().border_color(t.border).bg(t.surface)
+      .child(what)
+      .child(controls);
   }
 
   /** ⟳: reloads now. @param {Record<string, string>} t */

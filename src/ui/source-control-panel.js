@@ -7,6 +7,7 @@ import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { statusLetter, statusColor, printable, folderOf, nameOf, scrollArea } from "./theme.js";
 import { diffTargetFor } from "../core/diff-target.js";
 import { commitReadiness } from "../core/commit.js";
+import { isDiscardable, unstagedChanges } from "../core/status.js";
 import { openDiff } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
 
@@ -47,8 +48,6 @@ export class SourceControlPanel {
   constructor(workbench, cx) {
     this.workbench = workbench;
     /** @type {string | null} */
-    this.following = null;
-    /** @type {string | null} */
     this.error = null;
     /** The lastError whose detail toggle is shown, and whether its detail is open. */
     this.shownError = null;
@@ -58,7 +57,8 @@ export class SourceControlPanel {
     /**
      * The Change the confirm dialog asks about, and the snapshot it was taken from.
      * Valid only for the next "discard", and only while that snapshot is current.
-     * @type {{ repositoryId: string, snapshot: any, change: import("../core/status.js").Change } | null}
+     * `focusSkipped`: the one focus refresh it may hold back has been held back.
+     * @type {{ repositoryId: string, snapshot: any, change: import("../core/status.js").Change, focusSkipped: boolean } | null}
      */
     this.pendingDiscard = null;
     this.handle = cx.focus_handle();
@@ -106,7 +106,7 @@ export class SourceControlPanel {
    * @param {any} repository @param {import("../core/status.js").Change} change
    */
   askDiscard(repository, change) {
-    this.pendingDiscard = { repositoryId: repository.id, snapshot: repository.snapshot, change };
+    this.pendingDiscard = { repositoryId: repository.id, snapshot: repository.snapshot, change, focusSkipped: false };
     openOverlay({
       mod: "confirm", kind: "dialog", modal: true, width: 420, height: 170,
       props: {
@@ -123,26 +123,36 @@ export class SourceControlPanel {
    * still listed. The pending Change is used up either way.
    */
   confirmDiscard() {
+    const repository = this.pendingRepository();
     const pending = this.pendingDiscard;
     this.pendingDiscard = null;
-    if (!pending) return;
-    const state = this.workbench.state;
-    if (state.kind !== "ready" || state.repository.id !== pending.repositoryId) return;
-    const s = state.repository.snapshot;
-    if (s !== pending.snapshot) return;
+    if (!repository || !pending) return;
     const { group, path } = pending.change;
-    const listed = s.groups[group]?.some((c) => c.path === path);
-    if (listed && (group === "changes" || group === "untracked")) void state.repository.discard([path]);
+    const listed = repository.snapshot.groups[group]?.some((c) => c.path === path);
+    if (listed && isDiscardable(pending.change)) void repository.discard([path]);
   }
 
-  /** Follows the active space when it changes. Render re-runs when spaces change. */
+  /**
+   * The followed Repository while the pending discard is still valid (same Repository,
+   * no refresh since the dialog opened), else null.
+   */
+  pendingRepository() {
+    const pending = this.pendingDiscard;
+    const state = this.workbench.state;
+    if (!pending || state.kind !== "ready") return null;
+    const { repository } = state;
+    return repository.id === pending.repositoryId && repository.snapshot === pending.snapshot ? repository : null;
+  }
+
+  /**
+   * Follows the active space when the shared Workbench follows somewhere else
+   * (another space, or another copy moved it while this one was hidden).
+   * Render re-runs when spaces change.
+   */
   follow() {
     if (checking()) return;
     const where = activeSpace();
-    if (!where) return;
-    const key = JSON.stringify(where);
-    if (key === this.following) return;
-    this.following = key;
+    if (!where || this.workbench.isFollowing(where)) return;
     this.error = null;
     this.workbench.follow(where).catch((err) => {
       this.error = String(err?.message ?? err);
@@ -173,16 +183,17 @@ export class SourceControlPanel {
   }
 
   /**
-   * A focus-triggered refresh. Skipped while a discard confirmation is still valid:
-   * the confirm dialog closing gives the panel focus, possibly just before
-   * "discard" arrives, and a refresh landing first would void the Confirm.
-   * Once anything else refreshes, the pending Change is stale and this runs again.
+   * A focus-triggered refresh. The first one while a discard confirmation is still
+   * valid is skipped: the confirm dialog closing gives the panel focus, possibly just
+   * before "discard" arrives, and a refresh landing first would void the Confirm.
+   * Only one is skipped, so a cancelled dialog can't keep focus refreshes off.
    */
   refreshForFocus() {
     const pending = this.pendingDiscard;
-    const state = this.workbench.state;
-    if (pending && state.kind === "ready" && state.repository.id === pending.repositoryId
-      && state.repository.snapshot === pending.snapshot) return;
+    if (pending && !pending.focusSkipped && this.pendingRepository()) {
+      pending.focusSkipped = true;
+      return;
+    }
     this.refresh();
   }
 
@@ -231,8 +242,7 @@ export class SourceControlPanel {
   stageAll() {
     const cur = this.current();
     if (!cur || cur.s.running !== null) return;
-    const { groups } = cur.s;
-    const unstaged = [...groups.conflicts, ...groups.changes, ...groups.untracked];
+    const unstaged = unstagedChanges(cur.s.groups);
     if (unstaged.length) void cur.repository.stage(unstaged.map((c) => c.path));
   }
 
@@ -486,7 +496,7 @@ function runningStrip(t, label) {
  * @param {Record<string, string>} t @param {import("../core/status.js").ChangeGroups} groups @param {Actions} actions
  */
 function changeLists(t, groups, actions) {
-  const unstaged = [...groups.conflicts, ...groups.changes, ...groups.untracked];
+  const unstaged = unstagedChanges(groups);
   const row = (c) => changeRow(t, c, actions);
   return v_flex().flex_1().min_h(0)
     .child(listHeader(t, "Unstaged", unstaged.length,
@@ -590,8 +600,7 @@ function changeRow(t, change, actions) {
   const path = printable(change.path);
   const rowId = `row-${change.group}:${change.path}`;
   const selected = actions.selectedKey === rowKey(change);
-  // Discard is offered only for unstaged edits and untracked files, never staged rows or Conflicts.
-  const discardable = change.group === "changes" || change.group === "untracked";
+  const discardable = isDiscardable(change);
   const row = h_flex().id(rowId).flex_none().h(24).px(10).gap(8).items_center()
     .cursor_pointer().when(selected, (e) => e.bg(t.raised)).hover((s) => s.bg(t.hover))
     .on_click((_e, cx) => {

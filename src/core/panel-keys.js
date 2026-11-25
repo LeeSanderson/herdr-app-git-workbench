@@ -2,6 +2,8 @@
 // The Source Control panel's list keys: which row is selected, and what a key does to it.
 // Herdr-free so it can be tested; the panel maps the actions onto its own calls.
 
+import { isDiscardable, unstagedChanges } from "./status.js";
+
 /** @typedef {import("./status.js").Change} Change */
 /** @typedef {{ key: string, change: Change }} ListRow */
 /** The selected row: its key, and its index when last seen (kept for when the row leaves). */
@@ -18,7 +20,7 @@ export const rowKey = (change) => `${change.group}:${change.path}`;
  * @returns {ListRow[]}
  */
 export function listRows(groups) {
-  return [...groups.conflicts, ...groups.changes, ...groups.untracked, ...groups.staged]
+  return [...unstagedChanges(groups), ...groups.staged]
     .map((change) => ({ key: rowKey(change), change }));
 }
 
@@ -36,7 +38,7 @@ export function listKeyAction(keystroke, selected) {
     case "space": return selected ? "toggle" : null;
     case "enter": return selected ? "open" : null;
     case "delete":
-      return selected && (selected.group === "changes" || selected.group === "untracked") ? "discard" : null;
+      return selected && isDiscardable(selected) ? "discard" : null;
     default: return null;
   }
 }

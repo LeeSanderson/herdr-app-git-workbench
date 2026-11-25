@@ -31,6 +31,8 @@ export function createWorkbench(platform) {
   /** @type {{ repository: Repository, close(): Promise<void> } | null} the followed Repository */
   let current = null;
   let generation = 0;
+  /** Where the latest `follow` call asked to go. @type {{ machine: string | null, folder: string } | null} */
+  let requested = null;
 
   /** @param {WorkbenchState} next */
   function setState(next) {
@@ -104,11 +106,21 @@ export function createWorkbench(platform) {
     },
 
     /**
+     * Whether the latest `follow` call (still resolving or done) was for `where`.
+     * Panel copies use it to follow the active space only when it differs.
+     * @param {{ machine: string | null, folder: string }} where
+     */
+    isFollowing({ machine, folder }) {
+      return requested !== null && requested.machine === (machine ?? null) && requested.folder === folder;
+    },
+
+    /**
      * Follows the Repository containing `folder` on `machine` (null = local).
      * A later call supersedes an earlier one still resolving.
      * @param {{ machine: string | null, folder: string }} where
      */
     async follow({ machine, folder }) {
+      requested = { machine: machine ?? null, folder };
       const mine = ++generation;
       const stale = () => mine !== generation;
       try {

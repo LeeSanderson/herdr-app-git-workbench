@@ -277,8 +277,10 @@ export function createRepository({ git, key, queue = createQueue(), gitDir, read
 
     /**
      * Unstages `paths`: `git restore --staged`, or `git reset` on an unborn branch,
-     * where restore fails because HEAD can't be resolved. For a staged rename,
-     * pass both `path` and `oldPath`.
+     * where restore fails because HEAD can't be resolved. (Spec #19 names only
+     * `restore --staged`; `git reset -q -- <paths>` is the documented way to
+     * unstage before the first commit, removing the paths from the index.)
+     * For a staged rename, pass both `path` and `oldPath`.
      * @param {string[]} paths @returns {Promise<ActionResult>}
      */
     unstage(paths) {
