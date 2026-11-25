@@ -11,6 +11,24 @@ import { isDiscardable, unstagedChanges, folderOf, nameOf } from "../core/status
 import { messageOf } from "../core/errors.js";
 import { openDiff, MOD } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
+import { graphSection, switcher, cycleVariant, proto } from "./graph-prototype.js"; // PROTOTYPE
+import { v_resizable, resizable_panel } from "gpui-base"; // PROTOTYPE
+
+/**
+ * PROTOTYPE: Change groups + commit box above, Graph below, with a draggable divider.
+ * The Graph starts at ⅔ of the panel (estimated from the viewport; the window keeps
+ * the dragged sizes under the group id). Collapsed, the Graph is just its header.
+ */
+function splitWithGraph(lists, commitBox, graph) {
+  if (proto.collapsed) return v_flex().flex_1().min_h(0).child(lists).child(commitBox).child(graph);
+  const viewportH = /** @type {any} */ (globalThis).window?.viewport_size?.().height ?? 900;
+  const topPx = Math.max(160, Math.round((viewportH - 120) / 3));
+  return v_resizable("scm-graph-split").flex_1().min_h(0)
+    .child(resizable_panel().size(topPx).size_range(140)
+      .child(v_flex().size_full().child(lists).child(commitBox)))
+    .child(resizable_panel().size_range(120)
+      .child(v_flex().size_full().child(graph)));
+}
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
 
@@ -262,6 +280,12 @@ export class SourceControlPanel {
    */
   onListKey(e, cx) {
     if (this.typing || !this.handle.is_focused()) return;
+    if (e.keystroke === "left" || e.keystroke === "right") { // PROTOTYPE: cycle Graph variants
+      cx.stop_propagation();
+      cycleVariant(e.keystroke === "left" ? -1 : 1);
+      cx.notify();
+      return;
+    }
     const cur = this.current();
     const rows = cur ? listRows(cur.snapshot.groups) : [];
     const selection = settleSelection(rows, this.selection);
@@ -310,8 +334,10 @@ export class SourceControlPanel {
       .bg(t.surface)
       .text_color(t.foreground)
       .text_size(13)
+      .relative() // PROTOTYPE: hosts the variant switcher
       .child(this.topBar(t, state))
-      .child(this.body(t, state));
+      .child(this.body(t, state))
+      .when(state.kind === "ready", (e) => e.child(switcher(t)));
   }
 
   /** @param {Record<string, string>} t @param {any} state */
@@ -383,8 +409,7 @@ export class SourceControlPanel {
           .when(snapshot.running !== null, (e) => e.child(runningStrip(t, snapshot.running.label)))
           .when(snapshot.lastError !== null, (e) => e.child(this.errorStrip(t, snapshot.lastError)))
           .when(snapshot.watchError !== null, (e) => e.child(watchBand(t, snapshot.watchError)))
-          .child(changeLists(t, snapshot.groups, actions))
-          .child(this.commitBox(t, snapshot));
+          .child(splitWithGraph(changeLists(t, snapshot.groups, actions), this.commitBox(t, snapshot), graphSection(t, snapshot))); // PROTOTYPE
       }
       default:
         return div();
