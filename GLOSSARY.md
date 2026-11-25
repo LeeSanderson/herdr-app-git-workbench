@@ -22,4 +22,8 @@
 
 **Discard**: Throwing away a Change's working-tree modifications. It always requires the user to confirm.
 
+**Graph**: The Source Control panel section listing commits reachable from the selected Refs, drawn with lanes showing how each commit connects to its parents.
+
+**Ref**: A named pointer into history shown as a badge in the Graph: a local branch, a remote branch, a tag, or HEAD.
+
 **Phase 1**: The MVP feature set. **Phase 2**: The follow-on feature set that Phase 1's design must not block.
