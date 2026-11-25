@@ -8,7 +8,7 @@ import { v_flex, h_flex, v_virtual_list, v_resizable, resizable_panel, Scrollbar
 import { rowWidth } from "../core/lanes.js";
 import { graphItems } from "../core/graph-items.js";
 import { graphKeyAction, moveGraphSelection, selectedItem, currentRow, nextRegion } from "../core/graph-keys.js";
-import { commitFileTarget } from "../core/diff-target.js";
+import { REF_FILTERS } from "../core/graph.js";
 import { folderOf, nameOf } from "../core/status.js";
 import { openDiff } from "./diff-tabs.js";
 import { statusColor, printable, iconButton } from "./widgets.js";
@@ -20,10 +20,10 @@ import { statusColor, printable, iconButton } from "./widgets.js";
 /** @typedef {import("../core/lanes.js").LaneRow} LaneRow */
 /**
  * The toolbar's sync buttons and how to run one.
- * @typedef {{ buttons: ReturnType<typeof import("../core/sync.js").syncButtons>, run(name: string): void }} SyncBar
+ * @typedef {{ buttons: ReturnType<typeof import("../core/sync.js").syncButtons>, run(name: import("../core/sync.js").SyncName): void }} SyncBar
  */
 
-/** The divider's id: the window keeps the dragged sizes under it. */
+/** The divider's id prefix (the Repository's id follows): the window keeps the dragged sizes under it. */
 const SPLIT_ID = "scm-graph-split";
 const LIST_ID = "graph-rows";
 const HEADER_H = 28;
@@ -57,6 +57,15 @@ export function relativeTime(iso, now) {
   const n = Math.floor(s / /** @type {number} */ (size));
   const plural = name !== "min" && name !== "h" && n !== 1 ? "s" : "";
   return `${n} ${name}${plural} ago`;
+}
+
+/**
+ * Opens a commit file's Diff view (nothing when the commit is no longer shown).
+ * @param {Graph} graph @param {string} oid @param {import("../core/commit-files.js").CommitFile} file
+ */
+function openFile(graph, oid, file) {
+  const target = graph.fileTarget(oid, file);
+  if (target) openDiff(target);
 }
 
 /** The visible rows of a ready Graph. @param {Graph} graph @param {Extract<GraphState, { kind: "ready" }>} state */
@@ -128,24 +137,33 @@ export class GraphSection {
     else if (action === "collapse") graph.collapse(item.oid);
     else if (action === "parent") graph.select({ oid: item.oid, path: null });
     else if (action === "toggle") void graph.toggle(item.oid);
-    else if (action === "open" && item.kind === "file") openDiff(commitFileTarget(graph.key, state.commits[item.index], item.file));
+    else if (action === "open" && item.kind === "file") openFile(graph, item.oid, item.file);
     cx.notify();
   }
 
   /**
    * The Change groups and commit box (`top`) above the Graph, split by a draggable
-   * divider. The Graph starts at up to ⅔ of the viewport. Collapsed, the Graph is only
-   * its header and there is no split. Starts the first load.
+   * divider. The Graph starts at up to ⅔ of the viewport, or where the divider was
+   * last dragged in this Repository (remembered through the settings port).
+   * Collapsed, the Graph is only its header and there is no split. Starts the first load.
+   *
+   * `resizable_panel().size()` is only the initial size: the window keeps the
+   * dragged sizes under the group's id across repaints, so passing it on every
+   * render doesn't undo a drag. The id names the Repository, so each Repository
+   * keeps its own split while the panel moves between them.
    * @param {Record<string, string>} t @param {Graph} graph @param {any} top @param {SyncBar} sync
+   * @param {string} repositoryId
    */
-  layout(t, graph, top, sync) {
+  layout(t, graph, top, sync, repositoryId) {
     if (graph.state.kind === "idle") void graph.load();
     const section = this.section(t, graph, sync);
     if (this.collapsed) return v_flex().flex_1().min_h(0).child(top).child(section);
     const viewport = /** @type {any} */ (globalThis).window?.viewport_size?.();
     const height = viewport?.height ?? 900;
-    const topPx = Math.max(160, Math.round(height / 3));
-    return v_resizable(SPLIT_ID).flex_1().min_h(0)
+    const topPx = graph.splitSize ?? Math.max(160, Math.round(height / 3));
+    return v_resizable(`${SPLIT_ID}:${repositoryId}`).flex_1().min_h(0)
+      // Called once a drag ends; sizes[0] is the top panel's height.
+      .on_resize((sizes) => graph.setSplitSize(sizes[0]))
       .child(resizable_panel().size(topPx).size_range(140).child(v_flex().size_full().child(top)))
       .child(resizable_panel().size_range(HEADER_H + TOOLBAR_H + 60).child(section));
   }
@@ -214,8 +232,8 @@ function syncButton(t, id, button, onClick) {
     .child(button.label);
 }
 
-/** @type {[import("../core/graph.js").RefFilter, string][]} */
-const FILTER_LABELS = [["auto", "Auto"], ["all", "All"], ["current", "Current"]];
+/** Each Ref filter with its label, its name capitalised: Auto, All, Current. @type {[import("../core/graph.js").RefFilter, string][]} */
+const FILTER_LABELS = REF_FILTERS.map((f) => [f, f[0].toUpperCase() + f.slice(1)]);
 
 /**
  * The Auto | All | Current segments. Choosing one remembers it for the Repository and reloads.
@@ -321,7 +339,7 @@ function list(t, graph, state, section) {
         void graph.toggle(it.oid);
       } else if (it.kind === "file") {
         graph.select({ oid: it.oid, path: it.file.path });
-        openDiff(commitFileTarget(graph.key, commits[it.index], it.file));
+        openFile(graph, it.oid, it.file);
       }
       cx.notify();
     })
@@ -336,7 +354,7 @@ const MORE_KEY = "more";
 const MORE_H = 26;
 
 /**
- * "Load more…": adds 50 commits. The last commit's lanes carry on through it.
+ * "Load more…": adds PAGE_SIZE (history.js) commits. The last commit's lanes carry on through it.
  * @param {Record<string, string>} t @param {LaneRow | undefined} last @param {boolean} loading
  */
 function moreRow(t, last, loading) {

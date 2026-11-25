@@ -8,7 +8,10 @@ import { machineId } from "./repository-key.js";
 import { createSignal } from "./signal.js";
 
 /** @typedef {import("./git.js").TimeoutClass} TimeoutClass */
-/** @typedef {Readonly<{ label: string, timeoutClass: TimeoutClass }>} QueueEntry */
+/**
+ * `sync` is true for a Fetch, Pull or Push (its running strip shows a spinner).
+ * @typedef {Readonly<{ label: string, timeoutClass: TimeoutClass, sync: boolean }>} QueueEntry
+ */
 
 /**
  * Stable string form of a queue key.
@@ -45,12 +48,12 @@ export function createQueue() {
      * Runs `fn` after every entry added before it has finished. While it runs,
      * `relabel(label)` changes the label `running` shows (e.g. a sync that waits long).
      * @template T
-     * @param {{ label: string, timeoutClass: TimeoutClass }} entry
+     * @param {{ label: string, timeoutClass: TimeoutClass, sync?: boolean }} entry
      * @param {(entry: QueueEntry, relabel: (label: string) => void) => Promise<T>} fn
      * @returns {Promise<T>}
      */
     run(entry, fn) {
-      const frozen = Object.freeze({ label: entry.label, timeoutClass: entry.timeoutClass });
+      const frozen = Object.freeze({ label: entry.label, timeoutClass: entry.timeoutClass, sync: entry.sync ?? false });
       pending++;
       const result = tail.then(async () => {
         running = frozen;

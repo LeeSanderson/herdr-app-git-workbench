@@ -80,6 +80,7 @@ test("a running fetch says so, and adds the sign-in hint after about 15 s", asyn
   const done = repository.sync("fetch");
   await started;
   assert.equal(repository.snapshot.running.label, "Fetching…");
+  assert.equal(repository.snapshot.running.sync, true, "a sync is marked, for its spinner");
   assert.deepEqual(fake.sleeps, [15_000]);
 
   await fake.tick();

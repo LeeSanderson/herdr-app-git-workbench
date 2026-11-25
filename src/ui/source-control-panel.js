@@ -398,13 +398,13 @@ export class SourceControlPanel {
           },
         };
         return v_flex().flex_1().min_h(0)
-          .when(snapshot.running !== null, (e) => e.child(runningStrip(t, snapshot.running.label)))
+          .when(snapshot.running !== null, (e) => e.child(runningStrip(t, snapshot.running)))
           .when(snapshot.lastError !== null, (e) => e.child(this.errorStrip(t, snapshot.lastError, repository)))
           .when(snapshot.watchError !== null, (e) => e.child(watchBand(t, snapshot.watchError)))
           .child(this.graph.layout(t, repository.graph, v_flex().size_full()
             .child(changeLists(t, snapshot.groups, actions))
             .child(this.commitBox(t, snapshot)),
-          { buttons: syncButtons(snapshot), run: (name) => void repository.sync(name) }));
+          { buttons: syncButtons(snapshot), run: (name) => void repository.sync(name) }, repository.id));
       }
       default:
         return div();
@@ -501,12 +501,16 @@ export class SourceControlPanel {
 /** The paths to unstage for a staged Change: both sides of a rename. @param {import("../core/status.js").Change} c */
 const pathsOf = (c) => (c.oldPath !== undefined ? [c.path, c.oldPath] : [c.path]);
 
-/** The running command's label ("Staging…"); actions are disabled meanwhile. @param {Record<string, string>} t @param {string} label */
-function runningStrip(t, label) {
+/**
+ * The running command's label ("Staging…"); actions are disabled meanwhile. A sync
+ * (Fetching…, Pulling…, Pushing…) adds a spinner: it can take a while.
+ * @param {Record<string, string>} t @param {import("../core/queue.js").QueueEntry} running
+ */
+function runningStrip(t, running) {
   return h_flex().flex_none().h(24).px(10).gap(6).items_center().text_size(11).text_color(t.muted)
     .bg(t.chrome).border_b_1().border_color(t.border)
-    .child(div().flex_none().frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80))
-    .child(div().flex_1().min_w(0).truncate().child(label));
+    .when(running.sync, (e) => e.child(div().flex_none().frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 80)))
+    .child(div().flex_1().min_w(0).truncate().child(running.label));
 }
 
 /**

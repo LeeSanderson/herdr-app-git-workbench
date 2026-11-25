@@ -5,7 +5,7 @@
 import { parseStatus } from "./status.js";
 import { watchLabel, watchRoots } from "./watch-filter.js";
 import { repositoryKey, repositoryId } from "./repository-key.js";
-import { actionError, messageOf } from "./errors.js";
+import { actionError, errorFrom, messageOf, outputOf } from "./errors.js";
 import { createSignal, coalesce } from "./signal.js";
 import { createGraph } from "./graph.js";
 import { SYNC_OPS, runSync } from "./sync.js";
@@ -113,6 +113,11 @@ export function createRepository({ git, key, queue, platform, dirs }) {
   /** The history beside the Change groups. Its loads skip the queue (see graph.js). */
   const graph = createGraph({ git, key, status: () => status, settings: platform });
 
+  /** Reloads the Graph if it has loaded once and the Repository is still followed; never rejects. */
+  function reloadGraph() {
+    return graph.started && !disposed ? graph.load() : Promise.resolve();
+  }
+
   /** Rebuilds the snapshot from the latest status, the queue and lastError, and tells listeners. */
   function publish() {
     if (!status) return;
@@ -159,10 +164,10 @@ export function createRepository({ git, key, queue, platform, dirs }) {
       debouncing = false;
     }
     if (disposed) return;
-    const reloadGraph = refsMoved;
+    const moved = refsMoved;
     refsMoved = false;
     await refresh().catch(() => {});
-    if (reloadGraph && graph.started && !disposed) await graph.load();
+    if (moved) await reloadGraph();
   }
 
   /** @type {import("./platform.js").Watch[]} */
@@ -192,17 +197,18 @@ export function createRepository({ git, key, queue, platform, dirs }) {
    * @param {TimeoutClass} timeoutClass
    * @param {(timeoutClass: TimeoutClass, relabel: (label: string) => void) => Promise<ActionError | null>} command
    *   `relabel` changes the label while it runs.
+   * @param {{ sync?: boolean }} [kind] `sync` marks a Fetch, Pull or Push in `snapshot.running`.
    * @returns {Promise<ActionResult>}
    */
-  async function act(label, timeoutClass, command) {
-    const error = await queue.run({ label, timeoutClass }, async (entry, relabel) => {
+  async function act(label, timeoutClass, command, { sync = false } = {}) {
+    const error = await queue.run({ label, timeoutClass, sync }, async (entry, relabel) => {
       /** @type {ActionError | null} */
       let error;
       try {
         error = await command(entry.timeoutClass, relabel);
       } catch (err) {
         // GitNotFound / GitTimeout
-        error = { summary: messageOf(err), detail: messageOf(err) };
+        error = errorFrom(err);
       }
       lastError = error;
       await self.refresh();
@@ -278,10 +284,10 @@ export function createRepository({ git, key, queue, platform, dirs }) {
         const args = ["commit", ...(amend ? ["--amend"] : []), "-m", message];
         const r = await git.run(key.machine, args, { cwd: key.toplevel, timeoutClass });
         // Hooks write to stderr; Git's own refusals ("nothing to commit") go to stdout.
-        return r.ok ? null : actionError([r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n"), "git commit failed");
+        return r.ok ? null : actionError(outputOf(r), "git commit failed");
       });
       // The new commit shows straight away; the reload runs beside the queue.
-      if (result.ok && graph.started) void graph.load();
+      if (result.ok) void reloadGraph();
       return result;
     },
 
@@ -319,8 +325,9 @@ export function createRepository({ git, key, queue, platform, dirs }) {
       const op = SYNC_OPS[name];
       if (!op) throw new Error(`Unknown sync: ${name}`);
       const result = await act(op.running, "long", (timeoutClass, relabel) =>
-        runSync({ git, machine: key.machine, cwd: key.toplevel, timeoutClass, sleep: platform.sleep, relabel }, op, options));
-      if (graph.started && !disposed) await graph.load();
+        runSync({ git, machine: key.machine, cwd: key.toplevel, timeoutClass, sleep: platform.sleep, relabel }, op, options),
+      { sync: true });
+      await reloadGraph();
       return result;
     },
 

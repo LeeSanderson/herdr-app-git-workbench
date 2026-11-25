@@ -11,9 +11,10 @@ import { historyArgs, parseHistory, isHeadCommit, PAGE_SIZE } from "./history.js
 import { layoutLanes } from "./lanes.js";
 import { commitFilesArgs, parseCommitFiles } from "./commit-files.js";
 import { createSignal, coalesce } from "./signal.js";
-import { actionError, messageOf } from "./errors.js";
+import { actionError, errorFrom } from "./errors.js";
 import { repositoryId } from "./repository-key.js";
 import { pruneGraphSelection } from "./graph-keys.js";
+import { commitFileTarget } from "./diff-target.js";
 
 /** @typedef {import("./history.js").Commit} Commit */
 /** @typedef {import("./lanes.js").LaneRow} LaneRow */
@@ -38,8 +39,12 @@ export const REF_FILTERS = Object.freeze(["auto", "all", "current"]);
 /** The per-Repository setting key of the Ref filter. @param {import("./repository-key.js").RepositoryKey} key */
 export const refFilterSetting = (key) => `gitwb.refFilter.${repositoryId(key)}`;
 
+/** The per-Repository setting key of the dragged split size. @param {import("./repository-key.js").RepositoryKey} key */
+export const splitSizeSetting = (key) => `gitwb.graphSplit.${repositoryId(key)}`;
+
 /**
- * @typedef {{ unborn: boolean, detached: boolean, upstream: string | null, ahead: number | null }} HeadStatus
+ * The status fields the Ref filter reads.
+ * @typedef {Pick<import("./repository.js").Snapshot, "unborn" | "detached" | "upstream" | "ahead">} HeadStatus
  */
 
 /**
@@ -85,6 +90,9 @@ export function createGraph({ git, key, status, settings }) {
   const saved = settings.getSetting(refFilterSetting(key));
   /** @type {RefFilter} */
   let filter = REF_FILTERS.find((f) => f === saved) ?? "auto";
+  const savedSplit = settings.getSetting(splitSizeSetting(key));
+  /** The dragged split size, or null when never dragged. @type {number | null} */
+  let splitSize = typeof savedSplit === "number" && savedSplit > 0 ? savedSplit : null;
   let disposed = false;
   const changes = createSignal();
   /** Commits to load: the first page, plus one page per Load more. Every load, reloads too, asks for this many. */
@@ -131,7 +139,7 @@ export function createGraph({ git, key, status, settings }) {
       });
     } catch (err) {
       // GitNotFound / GitTimeout
-      set({ kind: "error", error: { summary: messageOf(err), detail: messageOf(err) } });
+      set({ kind: "error", error: errorFrom(err) });
     }
   }
 
@@ -160,7 +168,7 @@ export function createGraph({ git, key, status, settings }) {
         ? { kind: "ready", files: Object.freeze(parseCommitFiles(r.stdout)) }
         : { kind: "error", error: actionError(r.stderr, "git diff-tree failed") };
     } catch (err) {
-      next = { kind: "error", error: { summary: messageOf(err), detail: messageOf(err) } };
+      next = { kind: "error", error: errorFrom(err) };
     }
     if (disposed) return;
     files.set(commit.oid, Object.freeze(next));
@@ -184,9 +192,6 @@ export function createGraph({ git, key, status, settings }) {
   }
 
   return {
-    /** The Repository's key, for the Diff targets of commit files. */
-    key,
-
     /** @returns {GraphState} */
     get state() {
       return state;
@@ -203,9 +208,9 @@ export function createGraph({ git, key, status, settings }) {
     load,
 
     /**
-     * Loads 50 more commits than are shown: the same query at the larger count,
+     * Loads PAGE_SIZE more commits than are shown: the same query at the larger count,
      * replacing the snapshot (topological order keeps the rows already shown in
-     * place). Asking again before it lands asks for the same count, not 50 more.
+     * place). Asking again before it lands asks for the same count, not PAGE_SIZE more.
      * @returns {Promise<void>}
      */
     loadMore() {
@@ -229,6 +234,23 @@ export function createGraph({ git, key, status, settings }) {
       settings.setSetting(refFilterSetting(key), next);
       changes.emit();
       return load();
+    },
+
+    /**
+     * The height in pixels of the Change groups above the Graph, as last dragged
+     * in this Repository; null until a drag.
+     * @returns {number | null}
+     */
+    get splitSize() {
+      return splitSize;
+    },
+
+    /** Remembers a dragged split size for this Repository. @param {number} px */
+    setSplitSize(px) {
+      const next = Math.round(px);
+      if (!(next > 0) || next === splitSize) return;
+      splitSize = next;
+      settings.setSetting(splitSizeSetting(key), next);
     },
 
     /** True while a load runs, a reload too (which keeps the previous state until it lands). */
@@ -295,6 +317,17 @@ export function createGraph({ git, key, status, settings }) {
      */
     files(oid) {
       return files.get(oid) ?? null;
+    },
+
+    /**
+     * The Diff target that opens `file` of the shown commit `oid` (from its first
+     * parent to the commit), or null when that commit isn't shown.
+     * @param {string} oid @param {CommitFile} file
+     * @returns {import("./diff-target.js").DiffTarget | null}
+     */
+    fileTarget(oid, file) {
+      const commit = shown(oid);
+      return commit ? commitFileTarget(key, commit, file) : null;
     },
 
     dispose() {

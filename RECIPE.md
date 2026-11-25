@@ -26,8 +26,9 @@ change, or a file of a commit, opens a side-by-side (or inline) diff.
     Hovering an unstaged row shows 🗑. The selected row has a `raised` background.
   - Commit box at the bottom: a 3-row textarea, a status line ("2 files ready",
     "Nothing staged", "Resolve 1 conflict first"), and **Commit to &lt;branch&gt;**.
-  - **Graph** below a draggable divider (id `scm-graph-split`; starts at up to ⅔ of
-    the viewport). Header: ▾/▸ collapse, "Graph", a spinner while reloading, and
+  - **Graph** below a draggable divider (id `scm-graph-split:<repository id>`;
+    starts at up to ⅔ of the viewport, or at the size last dragged in that
+    repository, saved from `on_resize`). Header: ▾/▸ collapse, "Graph", a spinner while reloading, and
     `Auto | All | Current`. Toolbar: **Fetch**, **Pull ↓n**, **Push ↑n** or
     **Publish** (primary one in `accent`), ⌖ go to current, ⟳ reload. One virtual
     list: 40 px commit rows (lane cell, chevron, up to 3 badges then `+N`, subject,
@@ -112,7 +113,8 @@ change, or a file of a commit, opens a side-by-side (or inline) diff.
   Herdr platform.
 - **`herdr` functions:** `exec`, `readTextFile`, `watchFolder`, `spaces`, `focused`,
   `panes`, `home`, `theme`, `settings`, `shared`/`setShared` (`gitwb.diffMode`, and
-  `gitwb.refFilter.<repository id>` through the platform's settings),
+  `gitwb.refFilter.<repository id>` and `gitwb.graphSplit.<repository id>` through
+  the platform's settings),
   `nextCommand`, `openOverlay`, `run`, `checking`, `window`.
 - **Commands it runs:** `tab.new`, `tab.select`, `layout.hide {id: "git-workbench"}`.
 - **Shipped mods it uses:** `confirm` (discard dialog), with

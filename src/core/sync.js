@@ -6,7 +6,7 @@
 // Extending: a new sync adds an entry to SYNC_OPS; a new failure class adds a
 // rule to FAILURE_RULES and its message to FAILURE_MESSAGES.
 
-import { actionError } from "./errors.js";
+import { actionError, outputOf } from "./errors.js";
 import { GitTimeout } from "./git.js";
 
 /** @typedef {ReturnType<import("./git.js").createGit>} Git */
@@ -34,12 +34,18 @@ import { GitTimeout } from "./git.js";
  */
 
 /**
- * A sync command's outcome: Git's result, the remote it used when known, and a
- * failure `kind` (and `branch`, `files`) when the command itself knows it (it then skips the text rules).
- * @typedef {GitResult & { remote?: string, kind?: string, branch?: string, files?: number }} SyncResult
+ * A failure class: matched from Git's text by FAILURE_RULES, or reported by the
+ * command itself ("conflicts", "no-publish-remote"). Each has a FAILURE_MESSAGES entry.
+ * @typedef {"auth" | "rejected-push" | "no-upstream" | "divergence" | "would-overwrite" | "conflicts" | "no-publish-remote"} FailureKind
  */
 
-/** @type {Record<string, SyncOp>} */
+/**
+ * A sync command's outcome: Git's result, the remote it used when known, and a
+ * failure `kind` (and `branch`, `files`) when the command itself knows it (it then skips the text rules).
+ * @typedef {GitResult & { remote?: string, kind?: FailureKind, branch?: string, files?: number }} SyncResult
+ */
+
+/** `satisfies`, not `type`, so SyncName is the literal keys. @satisfies {Record<string, SyncOp>} */
 export const SYNC_OPS = {
   fetch: {
     verb: "Fetch",
@@ -58,7 +64,7 @@ export const SYNC_OPS = {
     running: "Pushing…",
     // Never a force flag of any kind, including --force-with-lease.
     async command(ctx) {
-      const branch = (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+      const branch = await currentBranch(ctx);
       // A configured Upstream counts even when its remote ref is gone.
       // A detached HEAD (no branch) gets a plain push and Git's own error.
       if (!branch || (await config(ctx, `branch.${branch}.merge`))) return ctx.run(["push"]);
@@ -80,7 +86,7 @@ export const SYNC_OPS = {
       // Conflicts are read from the repository, not the exit code. Files that
       // were unmerged before the pull aren't this pull's conflicts.
       const files = before ? 0 : await unmergedCount(ctx);
-      return files ? { ...r, ok: false, kind: "conflicts", files } : r;
+      return files ? { ...r, ok: false, kind: /** @type {const} */ ("conflicts"), files } : r;
     },
   },
 };
@@ -91,6 +97,11 @@ async function unmergedCount(ctx) {
   if (!r.ok) return 0;
   // Each entry is "<mode> <oid> <stage>\t<path>"; a path has one entry per stage.
   return new Set(r.stdout.split("\0").filter(Boolean).map((e) => e.slice(e.indexOf("\t") + 1))).size;
+}
+
+/** The checked-out branch's short name, or "" when HEAD is detached. @param {SyncContext} ctx */
+async function currentBranch(ctx) {
+  return (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
 }
 
 /** Git's spellings of a false boolean. */
@@ -104,7 +115,7 @@ const FALSE = /^(?:false|no|off|0)$/i;
  * @param {SyncContext} ctx @returns {Promise<string[]>}
  */
 async function configuredPullMode(ctx) {
-  const branch = (await ctx.run(["symbolic-ref", "--short", "-q", "HEAD"], { read: true })).stdout.trim();
+  const branch = await currentBranch(ctx);
   const rebase = (branch && (await config(ctx, `branch.${branch}.rebase`))) || (await config(ctx, "pull.rebase"));
   const ff = await config(ctx, "pull.ff");
   if (!rebase && !ff) return ["--ff-only"];
@@ -146,7 +157,7 @@ async function publish(ctx, branch) {
       const stderr = names.length
         ? `No push remote configured for ${branch}, and no origin among: ${names.join(", ")}`
         : `No remote to publish ${branch} to`;
-      return { ok: false, code: 1, stdout: "", stderr, kind: "no-publish-remote", branch };
+      return { ok: false, code: 1, stdout: "", stderr, kind: /** @type {const} */ ("no-publish-remote"), branch };
     }
   }
   return { ...(await ctx.run(["push", "--set-upstream", remote, "HEAD"])), remote };
@@ -154,7 +165,7 @@ async function publish(ctx, branch) {
 
 /**
  * A recognised failure: its class, plus what its message needs.
- * @typedef {{ kind: string, remote: string | null, branch?: string, files?: number }} SyncFailure
+ * @typedef {{ kind: FailureKind, remote: string | null, branch?: string, files?: number }} SyncFailure
  *   `remote` is the remote the failure names (or the command reported), if known;
  *   `branch` the branch the command acted on, when it says; `files` how many
  *   files the failure is about, when known.
@@ -163,9 +174,10 @@ async function publish(ctx, branch) {
 /**
  * Failure classes, recognised by Git's error text (stderr and stdout together),
  * checked in order. Git can be localised: unmatched text falls back to Git's own
- * first line. Text from git 2.45.2, see docs/research/graph-sync-exec.md §4.
+ * first line. Text from git 2.45.2, see §4 of docs/research/graph-sync-exec.md on the
+ * `research/graph-sync-exec` branch (not merged into main).
  * `files`, when present, counts the files the failure names.
- * @type {{ kind: string, match: RegExp[], files?: (output: string) => number | undefined }[]}
+ * @type {{ kind: FailureKind, match: RegExp[], files?: (output: string) => number | undefined }[]}
  */
 export const FAILURE_RULES = [
   {
@@ -208,7 +220,7 @@ export const FAILURE_RULES = [
 
 /**
  * The strip message of each failure class: a summary and, optionally, actions.
- * @type {Record<string, (failure: SyncFailure, op: SyncOp) => Omit<ActionError, "detail">>}
+ * @type {Record<FailureKind, (failure: SyncFailure, op: SyncOp) => Omit<ActionError, "detail">>}
  */
 export const FAILURE_MESSAGES = {
   auth: ({ remote }, op) => ({

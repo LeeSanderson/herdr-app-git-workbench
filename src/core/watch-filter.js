@@ -42,21 +42,28 @@ const COMMON_DIR_REFS = /^(?:refs(?:\/.*)?|packed-refs|reftable(?:\/.*)?)$/;
 /**
  * Whether a changed path should refresh the Repository, and how: `refs` paths
  * also reload the Graph. Working-tree changes are `worktree`; inside the git dirs
- * only the allowlisted files count. Lock files (Git renames `<name>.lock` into
- * place, which reports the real name), objects, logs and other worktrees' dirs
- * are null.
+ * only the allowlisted files count. Git writes `<name>.lock` and renames it into
+ * place; a watcher may report only the lock name, so a lock file under the Refs
+ * paths (HEAD, loose refs, packed-refs, reftable) is `refs` too (the debounce
+ * absorbs the extra event), and any other lock file is null. Objects, logs and
+ * other worktrees' dirs are null.
  * @param {string} changed
  * @param {RepositoryDirs} dirs
  * @returns {WatchLabel | null}
  */
 export function watchLabel(changed, { root, gitDir, commonDir }) {
   const p = norm(changed);
-  const inGit = under(p, norm(gitDir));
-  const inCommon = under(p, norm(commonDir));
+  let inGit = under(p, norm(gitDir));
+  let inCommon = under(p, norm(commonDir));
   if (inGit !== null || inCommon !== null) {
-    if (p.endsWith(".lock")) return null;
+    const lock = p.endsWith(".lock");
+    if (lock) {
+      inGit = inGit?.slice(0, -".lock".length) ?? null;
+      inCommon = inCommon?.slice(0, -".lock".length) ?? null;
+    }
     if (inGit !== null && GIT_DIR_REFS.test(inGit)) return "refs";
     if (inCommon !== null && COMMON_DIR_REFS.test(inCommon)) return "refs";
+    if (lock) return null;
     if (inGit !== null && GIT_DIR_WORKTREE.test(inGit)) return "worktree";
     return null;
   }
