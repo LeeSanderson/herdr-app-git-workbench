@@ -1,8 +1,8 @@
 // @ts-check
-// The Source Control panel: follows the active space and shows the Workbench state.
+// The Source Control panel: follows the shown space's focused terminal and shows the Workbench state.
 
 import { div } from "gpui-kit";
-import { spaces, home, theme, run, checking, nextCommand, openOverlay, window } from "herdr";
+import { spaces, home, focused, panes, theme, run, checking, nextCommand, openOverlay, window } from "herdr";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { statusLetter, statusColor, printable, scrollArea, band, iconButton } from "./widgets.js";
 import { diffTargetFor } from "../core/diff-target.js";
@@ -13,6 +13,7 @@ import { openDiff, MOD } from "./diff-tabs.js";
 import { listRows, listKeyAction, moveSelection, settleSelection, rowKey } from "../core/panel-keys.js";
 import { nextRegion } from "../core/graph-keys.js";
 import { syncButtons } from "../core/sync.js";
+import { createPlaceTracker } from "../core/follow-place.js";
 import { GraphSection } from "./graph-section.js";
 
 /** @typedef {ReturnType<import("../core/workbench.js").createWorkbench>} Workbench */
@@ -39,13 +40,12 @@ function nextChange(workbench) {
   });
 }
 
-/** Where the active space lives: its machine and folder ("" = that machine's home). */
-function activeSpace() {
-  const space = spaces().find((s) => s.active);
-  if (!space) return null;
-  const machine = space.machine ?? null;
-  return { machine, folder: space.folder || (machine == null ? home() : "") };
-}
+/**
+ * Where the shown space's work is: its last focused terminal's folder, else where
+ * its terminals are, else its starting folder. Shared by every panel copy, like
+ * the Workbench.
+ */
+const places = createPlaceTracker();
 
 export class SourceControlPanel {
   /** @param {Workbench} workbench @param {import("gpui-kit").Context} cx */
@@ -151,13 +151,13 @@ export class SourceControlPanel {
   }
 
   /**
-   * Follows the active space when the shared Workbench follows somewhere else
-   * (another space, or another copy moved it while this one was hidden).
-   * Render re-runs when spaces change.
+   * Follows the shown space's place (see `places`) when the shared Workbench
+   * follows somewhere else (another space or folder, or another copy moved it
+   * while this one was hidden). Render re-runs when spaces and focus change.
    */
   follow() {
     if (checking()) return;
-    const where = activeSpace();
+    const where = places.whereToFollow(spaces(), focused(), panes(), home());
     if (!where || this.workbench.isFollowing(where)) return;
     this.error = null;
     this.workbench.follow(where).catch((err) => {

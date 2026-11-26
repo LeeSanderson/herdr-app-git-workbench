@@ -13,6 +13,7 @@ import { loadDiff } from "./diff.js";
 /** @typedef {import("./queue.js").Queue} Queue */
 /** @typedef {import("./repository.js").Repository} Repository */
 /** @typedef {import("./repository-key.js").RepositoryKey} RepositoryKey */
+/** @typedef {import("./follow-place.js").Place} Place */
 /**
  * Immutable tagged union, discriminated by `kind`.
  * @typedef {Readonly<{ kind: "git-missing" }
@@ -32,7 +33,7 @@ export function createWorkbench(platform) {
   /** @type {{ repository: Repository, close(): Promise<void> } | null} the followed Repository */
   let current = null;
   let generation = 0;
-  /** Where the latest `follow` call asked to go. @type {{ machine: string | null, folder: string } | null} */
+  /** Where the latest `follow` call asked to go. @type {Place | null} */
   let requested = null;
 
   /** @param {WorkbenchState} next */
@@ -105,7 +106,7 @@ export function createWorkbench(platform) {
     /**
      * Whether the latest `follow` call (still resolving or done) was for `where`.
      * Panel copies use it to follow the active space only when it differs.
-     * @param {{ machine: string | null, folder: string }} where
+     * @param {Place} where
      */
     isFollowing({ machine, folder }) {
       return requested !== null && requested.machine === (machine ?? null) && requested.folder === folder;
@@ -114,7 +115,7 @@ export function createWorkbench(platform) {
     /**
      * Follows the Repository containing `folder` on `machine` (null = local).
      * A later call supersedes an earlier one still resolving.
-     * @param {{ machine: string | null, folder: string }} where
+     * @param {Place} where
      */
     async follow({ machine, folder }) {
       requested = { machine: machine ?? null, folder };

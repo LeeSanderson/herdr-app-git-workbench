@@ -1,7 +1,7 @@
 # Git Workbench
 
 A Source Control panel docked beside the terminals, and a Diff view in its own tab
-for each changed file. The panel follows the active space's Git repository: branch,
+for each changed file. The panel follows the shown space's terminals' Git repository: branch,
 upstream, ahead/behind, the changes in Unstaged and Staged lists with checkboxes,
 and a commit box, with a Graph of history and Fetch/Pull/Push below. Clicking a
 change, or a file of a commit, opens a side-by-side (or inline) diff.
@@ -50,8 +50,10 @@ change, or a file of a commit, opens a side-by-side (or inline) diff.
 
 ## How it behaves
 
-- The panel follows the active space's `folder` (not the focused terminal's cwd).
-  It refreshes from a debounced (400 ms) watch of the work tree and the git dir,
+- The panel follows the `cwd` of the terminal last focused in the shown space
+  (remembered per space, since a mod pane has none), else the `cwd` of the
+  space's first terminal (shown tab first), else the space's `folder`. Focusing
+  a terminal in another repository switches the followed Repository. It refreshes from a debounced (400 ms) watch of the work tree and the git dir,
   after every Workbench action, and when the space changes, the window becomes
   active or the panel gets focus. No timed polling.
 - Ticking a row stages it (`git add`) or unstages it (`git restore --staged`, or
@@ -136,7 +138,7 @@ shown layout if it is a shipped one (ask first), add the `git-workbench` block w
 `layout.set` only if no node has that id, then `herdr-app check`. Leave
 `keys.json` alone. Fallback without a
 personal layout: `pane.split {"direction": "right", "mod": "herdr-app-git-workbench"}`.
-The mod runs `git` in the active space's folder and reads files under its `.git`;
+The mod runs `git` in that folder and reads files under its `.git`;
 it reaches the network only through Git, when the person presses Fetch, Pull, Push
 or Publish. It handles no credentials (Git's credential helper does). No extra
 install step for the Graph.

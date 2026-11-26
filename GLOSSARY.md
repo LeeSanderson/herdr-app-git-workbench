@@ -6,7 +6,7 @@
 
 **Diff view**: A read-only, code-review presentation of one Change, in either side-by-side or inline mode. Not raw `git diff` output.
 
-**Repository**: The single Git repository the Workbench is following, resolved from the active Herdr space's folder.
+**Repository**: The single Git repository the Workbench is following, resolved from the folder of the terminal last focused in the shown Herdr space, or, until one has had focus, where the space's first terminal is now, else the space's own folder (where its new terminals start).
 
 **Change**: One path that differs between HEAD, the index and the working tree. A path can have a staged Change and an unstaged Change at the same time.
 

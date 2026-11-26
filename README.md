@@ -6,8 +6,8 @@ Git source control and a visual diff for [Herdr Desktop](https://herdr.dev).
 
 - **Source Control panel:** opened beside your terminals from the command palette
   (`Ctrl+Shift+P`, "Git Workbench: Open Source Control beside this pane"), or kept
-  as a column in a personal layout. It follows the active space's repository and
-  shows the branch,
+  as a column in a personal layout. It follows the repository of the terminal you
+  last focused in the shown space, and shows the branch,
   its upstream and ahead/behind counts, any merge, rebase, cherry-pick or revert in
   progress, and your changes in two lists: Unstaged (Conflicts, Changes, Untracked)
   and Staged. Tick a row to stage or unstage it. Hover a row and click 🗑 to discard
@@ -38,8 +38,8 @@ It needs Git. If `git` is not on your `PATH`, the Workbench also looks in Git fo
 Windows' standard install folders.
 
 **What it does on your machine:** it runs `git` (through Herdr's `exec`) in the
-active space's folder, and reads files under that repository's `.git` folder. It
-reaches the network only when you press Fetch, Pull, Push or Publish, and then
+folder of the terminal you last focused (or the space's folder), and reads files
+under that repository's `.git` folder. It reaches the network only when you press Fetch, Pull, Push or Publish, and then
 only through Git. It never handles credentials: sign-in is left to Git and its
 credential helper.
 
@@ -299,10 +299,12 @@ sends it; don't bind it.
 - **Commands are ignored while the panel is hidden.** Herdr delivers
   `herdr-app-git-workbench.<command>` only to copies that are shown, so a bound
   key does nothing until you show the panel.
-- The panel follows the **active space's folder** (where its new terminals start),
-  not the folder of the focused terminal. If a space's folder is not the project
-  you work in, the panel shows that folder's repository, or "No repository".
-- One repository at a time: the one for the active space.
+- The panel follows the **folder of the terminal you last focused** in the shown
+  space, so `cd` into another project and focus that terminal to follow it. Until
+  a terminal in the space has had focus, it follows where the space's first
+  terminal is now (the folder Herdr names the space after), else the space's
+  folder (where its new terminals start).
+- One repository at a time: the one for the shown space's focused terminal.
 - Spaces on other machines are not tested. Herdr's file watch is local only, so a
   remote space refreshes only on actions, focus and the ⟳ button.
 - A running Git command cannot be cancelled; actions stay disabled until it ends
