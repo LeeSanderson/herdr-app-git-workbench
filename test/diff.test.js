@@ -1,10 +1,10 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { initRepo, git, write, lines, cleanup, docOf } from "./helpers/repo.js";
-import { createGit } from "../src/core/git.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
-import { diffTargetFor } from "../src/core/diff-target.js";
-import { loadDiff } from "../src/core/diff.js";
+import { createGit } from "../mods/herdr-app-git-workbench/src/core/git.js";
+import { nodePlatform } from "./helpers/node-platform.js";
+import { diffTargetFor } from "../mods/herdr-app-git-workbench/src/core/diff-target.js";
+import { loadDiff } from "../mods/herdr-app-git-workbench/src/core/diff.js";
 
 after(cleanup);
 
@@ -151,7 +151,7 @@ test("a configured textconv filter or external diff tool doesn't change the Diff
 });
 
 test("the Workbench loads a Diff target without following its Repository", async () => {
-  const { createWorkbench } = await import("../src/core/workbench.js");
+  const { createWorkbench } = await import("../mods/herdr-app-git-workbench/src/core/workbench.js");
   const root = initRepo({ files: { "a.txt": lines(["one"]) } });
   write(root, "a.txt", lines(["two"]));
   const workbench = createWorkbench(nodePlatform);

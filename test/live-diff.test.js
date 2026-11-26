@@ -1,10 +1,10 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { cleanup, initRepo, write, lines, tempDir } from "./helpers/repo.js";
-import { createWorkbench } from "../src/core/workbench.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
-import { diffTargetFor } from "../src/core/diff-target.js";
-import { createLiveDiff } from "../src/core/live-diff.js";
+import { createWorkbench } from "../mods/herdr-app-git-workbench/src/core/workbench.js";
+import { nodePlatform } from "./helpers/node-platform.js";
+import { diffTargetFor } from "../mods/herdr-app-git-workbench/src/core/diff-target.js";
+import { createLiveDiff } from "../mods/herdr-app-git-workbench/src/core/live-diff.js";
 
 after(cleanup);
 

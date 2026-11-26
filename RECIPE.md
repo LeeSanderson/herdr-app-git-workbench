@@ -100,7 +100,8 @@ change, or a file of a commit, opens a side-by-side (or inline) diff.
 
 ## Built from
 
-- **Mod `herdr-app-git-workbench`**, `mod.json` `{ "place": "none", "focusable": true }`.
+- **Mod `herdr-app-git-workbench`**, the folder `mods/herdr-app-git-workbench/` (paths
+  below are inside it), `mod.json` `{ "place": "none", "focusable": true }`.
   One `View` in `main.js`; each copy picks its role from `props().view`: none or
   `"panel"` is the Source Control panel, `"diff"` (with `props().diff`, a Diff target)
   is a Diff view. Module scope holds one shared Workbench for all copies.

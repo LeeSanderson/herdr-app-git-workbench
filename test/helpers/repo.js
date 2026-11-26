@@ -10,7 +10,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { closeAllWatches } from "../../src/adapters/node-platform.js";
+import { closeAllWatches } from "./node-platform.js";
 
 const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "gitwb-config-"));
 const emptyConfig = path.join(configDir, "gitconfig");

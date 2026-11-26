@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listKeyAction, listRows, moveSelection, settleSelection } from "../src/core/panel-keys.js";
+import { listKeyAction, listRows, moveSelection, settleSelection } from "../mods/herdr-app-git-workbench/src/core/panel-keys.js";
 
 const change = (path, group) => ({ path, status: group === "conflicts" ? "U" : group === "untracked" ? "?" : "M", group });
 

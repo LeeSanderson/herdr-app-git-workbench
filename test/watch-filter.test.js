@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { watchLabel } from "../src/core/watch-filter.js";
+import { watchLabel } from "../mods/herdr-app-git-workbench/src/core/watch-filter.js";
 
 const local = { root: "C:/Repo", gitDir: "C:/Repo/.git", commonDir: "C:/Repo/.git" };
 const linked = { root: "C:/Wt", gitDir: "C:/Repo/.git/worktrees/wt", commonDir: "C:/Repo/.git" };

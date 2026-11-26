@@ -3,12 +3,12 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { cleanup, initRepo, tempDir, git, write } from "./helpers/repo.js";
-import { createWorkbench } from "../src/core/workbench.js";
-import { nodePlatform, memorySettings } from "../src/adapters/node-platform.js";
+import { createWorkbench } from "../mods/herdr-app-git-workbench/src/core/workbench.js";
+import { nodePlatform, memorySettings } from "./helpers/node-platform.js";
 
 after(cleanup);
 
-/** @param {string} folder @param {import("../src/core/platform.js").Platform} [platform] */
+/** @param {string} folder @param {import("../mods/herdr-app-git-workbench/src/core/platform.js").Platform} [platform] */
 async function follow(folder, platform = nodePlatform) {
   const workbench = createWorkbench(platform);
   await workbench.follow({ machine: null, folder });

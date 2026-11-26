@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { initRepo, write, lines, cleanup, docOf } from "./helpers/repo.js";
-import { createGit } from "../src/core/git.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
-import { diffTargetFor } from "../src/core/diff-target.js";
-import { loadDiff } from "../src/core/diff.js";
-import { changeAnchors } from "../src/core/rows.js";
+import { createGit } from "../mods/herdr-app-git-workbench/src/core/git.js";
+import { nodePlatform } from "./helpers/node-platform.js";
+import { diffTargetFor } from "../mods/herdr-app-git-workbench/src/core/diff-target.js";
+import { loadDiff } from "../mods/herdr-app-git-workbench/src/core/diff.js";
+import { changeAnchors } from "../mods/herdr-app-git-workbench/src/core/rows.js";
 
 after(cleanup);
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diffTargetFor, targetKey, tabName } from "../src/core/diff-target.js";
+import { diffTargetFor, targetKey, tabName } from "../mods/herdr-app-git-workbench/src/core/diff-target.js";
 
 const key = { machine: null, toplevel: "C:/repo" };
 

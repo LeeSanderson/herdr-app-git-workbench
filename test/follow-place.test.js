@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPlaceTracker } from "../src/core/follow-place.js";
+import { createPlaceTracker } from "../mods/herdr-app-git-workbench/src/core/follow-place.js";
 
 const HOME = "C:\\Users\\me";
 const space = (id, folder, { active = false, machine = null, tabs = [] } = {}) => ({ id, folder, machine, active, tabs });

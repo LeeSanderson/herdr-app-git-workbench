@@ -4,8 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { initRepo, unbornRepo, git, write, cleanup } from "./helpers/repo.js";
-import { createWorkbench } from "../src/core/workbench.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
+import { createWorkbench } from "../mods/herdr-app-git-workbench/src/core/workbench.js";
+import { nodePlatform } from "./helpers/node-platform.js";
 
 after(cleanup);
 

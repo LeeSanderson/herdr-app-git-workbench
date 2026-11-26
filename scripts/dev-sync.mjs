@@ -1,11 +1,11 @@
-// Copies the mod's runtime files from this repo into Herdr's mods folder.
+// Copies the mod folder, mods/herdr-app-git-workbench/, into Herdr's mods folder.
 //
 //   node scripts/dev-sync.mjs           one-off mirror
 //   node scripts/dev-sync.mjs --watch   mirror, then copy on every save
 //
-// Why not a junction: Herdr's hot reload does not see saves made behind a
-// directory junction in mods/ (check and shot do work through one). See the
-// "Dev loop" wayfinder ticket.
+// Only for development: users copy the folder once. Why not a junction: Herdr's
+// hot reload does not see saves made behind a directory junction in mods/
+// (check and shot do work through one). See the "Dev loop" wayfinder ticket.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -14,24 +14,13 @@ import { fileURLToPath } from "node:url";
 
 const MOD_NAME = "herdr-app-git-workbench";
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SOURCE = path.join(REPO, "mods", MOD_NAME);
 const APP_HOME = process.env.HERDR_APP_HOME ?? path.join(os.homedir(), ".config", "herdr-app");
 const TARGET = path.join(APP_HOME, "mods", MOD_NAME);
 
-const INCLUDE_EXT = new Set([".js", ".mjs", ".json", ".svg", ".png"]);
-const EXCLUDE_DIRS = new Set([".git", ".claude", ".agents", "node_modules", "docs", "scripts", "test", "tests", "adapters"]);
-const EXCLUDE_FILES = new Set(["jsconfig.json", "package.json", "package-lock.json", "skills-lock.json",
-  // Published with the repo for herdr.dev, not part of the mod (Herdr: "leave the recipe and preview out").
-  "preview.png"]);
-
-/** Is this repo-relative path (forward slashes) part of the mod? */
+/** Is this path, relative to the mod folder (forward slashes), one to copy? */
 export function isModFile(rel) {
-  const parts = rel.split("/");
-  const name = parts[parts.length - 1];
-  if (parts.some((p) => p.startsWith("."))) return false;
-  if (parts.slice(0, -1).some((p) => EXCLUDE_DIRS.has(p))) return false;
-  if (EXCLUDE_FILES.has(name)) return false;
-  if (name.endsWith(".d.ts") || /\.test\.m?js$/.test(name)) return false;
-  return INCLUDE_EXT.has(path.extname(name));
+  return !isHerdrOwned(rel);
 }
 
 /** Files Herdr writes into the mod folder itself; never delete them. */
@@ -45,14 +34,14 @@ function walk(root, dir = "") {
   for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
     const rel = dir ? `${dir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
-      if (!entry.name.startsWith(".") && !EXCLUDE_DIRS.has(entry.name)) out.push(...walk(root, rel));
+      if (!entry.name.startsWith(".")) out.push(...walk(root, rel));
     } else out.push(rel);
   }
   return out;
 }
 
 function copy(rel) {
-  const src = path.join(REPO, rel);
+  const src = path.join(SOURCE, rel);
   const dst = path.join(TARGET, rel);
   const data = fs.readFileSync(src);
   if (fs.existsSync(dst) && fs.readFileSync(dst).equals(data)) return false;
@@ -81,7 +70,7 @@ function guardTarget() {
 }
 
 function mirror() {
-  const wanted = walk(REPO).filter(isModFile);
+  const wanted = walk(SOURCE).filter(isModFile);
   let changed = 0;
   for (const rel of wanted) if (copy(rel)) changed++;
   const keep = new Set(wanted);
@@ -93,7 +82,7 @@ function mirror() {
 
 function watch() {
   const pending = new Map();
-  fs.watch(REPO, { recursive: true }, (_event, filename) => {
+  fs.watch(SOURCE, { recursive: true }, (_event, filename) => {
     if (!filename) return;
     const rel = filename.split(path.sep).join("/");
     if (!isModFile(rel)) return;
@@ -101,7 +90,7 @@ function watch() {
     pending.set(rel, setTimeout(() => {
       pending.delete(rel);
       try {
-        const done = fs.existsSync(path.join(REPO, rel)) ? copy(rel) && "copied" : remove(rel) && "removed";
+        const done = fs.existsSync(path.join(SOURCE, rel)) ? copy(rel) && "copied" : remove(rel) && "removed";
         if (done) console.log(`${new Date().toLocaleTimeString()} ${done} ${rel}`);
       } catch (err) {
         console.error(`failed ${rel}: ${err.message}`);

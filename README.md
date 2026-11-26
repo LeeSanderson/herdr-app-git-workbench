@@ -77,70 +77,37 @@ the message names the remote and suggests running the same command (for example
 
 ## Install
 
-### Quick start
+You need [Herdr Desktop](https://herdr.dev) and Git.
 
-You need [Herdr Desktop](https://herdr.dev), Git, and Node 22 (only for the copy
-script; see below to install without Node).
+**Ask your Herdr agent:** *"add the mod at
+github.com/LeeSanderson/herdr-app-git-workbench"*. It copies
+`mods/herdr-app-git-workbench/` into `~/.config/herdr-app/mods/` and checks it.
+
+**Or by hand:**
 
 ```sh
 git clone https://github.com/LeeSanderson/herdr-app-git-workbench.git
-cd herdr-app-git-workbench
-npm run sync
+cp -R herdr-app-git-workbench/mods/herdr-app-git-workbench ~/.config/herdr-app/mods/
 herdr-app check ~/.config/herdr-app/mods/herdr-app-git-workbench
 ```
 
-Then press `Ctrl+Shift+P` in Herdr and run **Git Workbench: Open Source Control
-beside this pane**.
+In PowerShell, use `Copy-Item -Recurse` instead of `cp -R`. Copy the folder; don't link
+it, because Herdr's hot reload ignores changes made through a symlink or junction.
 
-**Without Node:** download the repository (on GitHub, **Code → Download ZIP**),
-make the folder `~/.config/herdr-app/mods/herdr-app-git-workbench`
-(`%USERPROFILE%\.config\herdr-app\mods\herdr-app-git-workbench` on Windows), and
-copy `main.js`, `mod.json` and `src/` into it. You can leave out `src/adapters/`.
+Then press `Ctrl+Shift+P` and run **Git Workbench: Open Source Control beside
+this pane**. That's all the mod needs. It binds no keys, and it does not dock
+itself anywhere (`"place": "none"` in `mod.json`).
 
-**With Herdr's agent:** ask it to "add the Herdr mod from
-https://github.com/LeeSanderson/herdr-app-git-workbench". Its installed guide
-covers adding mods from GitHub; it copies the mod folder and runs `herdr-app check`.
+**Update:** copy the folder again over the old one. **Uninstall:** delete
+`~/.config/herdr-app/mods/herdr-app-git-workbench`, and undo any layout or key
+changes from the next section.
 
-**Update:** `git pull`, then `npm run sync` again (or copy the files again).
+### Optional: a column in your layout
 
-To give the panel a column of its own in your layout, or a key to show and hide
-it, follow the full steps below.
-
-### Full steps
-
-These steps work for a person or an agent. They keep your own layout and keys.
-Steps 2 and 3 change Herdr's state, so an agent asks before each one.
-
-Step 1 is all the mod needs: it adds its own entry to Herdr's command palette and
-needs no change to `keys.json`. Steps 2 and 3 are optional. They give the panel a
-column of its own, which needs a personal layout because Herdr's shipped layouts
-are read-only. Without them, open it as a pane (see the
-[fallback](#fallback-keep-the-shipped-layout)).
-
-### 1. Copy the mod in as a real folder
-
-The mod folder is `~/.config/herdr-app/mods/herdr-app-git-workbench`. It must be a
-**real folder**: a directory junction or symlink breaks Herdr's hot reload.
-
-From a clone of this repository (needs Node 22; see
-[Quick start](#quick-start) to install without Node):
-
-```sh
-npm run sync
-```
-
-That copies only the runtime files (`main.js`, `mod.json`, `src/`
-without `src/adapters/`). Copying the whole repository folder by hand also works;
-leave out `RECIPE.md` and `preview.png`. Then check it loads:
-
-```sh
-herdr-app check ~/.config/herdr-app/mods/herdr-app-git-workbench
-```
-
-`mod.json` has `"place": "none"`: Herdr does not dock the panel anywhere by
-itself. Its `"palette"` entry adds **Git Workbench: Open Source Control beside
-this pane** to the command palette (`Ctrl+Shift+P`), which opens the panel as a
-pane on any layout (`pane.split`).
+The palette opens the panel as a pane in the current tab. To keep it in a column
+of its own beside the terminals, add it to a personal layout. Herdr's shipped
+layouts are read-only, so this needs one. These steps work for a person or an
+agent. They change Herdr's state, so an agent asks before each one.
 
 There is no palette entry to toggle the layout column: a palette entry cannot
 check whether the shown layout has that column, and on a layout without it
@@ -148,14 +115,14 @@ check whether the shown layout has that column, and on a layout without it
 key you bind yourself (see
 [Optional: a key to toggle the panel](#optional-a-key-to-toggle-the-panel)).
 
-### 2. Use a personal layout
+#### 1. Use a personal layout
 
 Herdr's own layouts (`main`, `terminals`, `win98`) are read-only, so the panel
 needs a personal layout. `herdr-app status` (or `shared("layout")` in a mod) names
 the layout that is shown.
 
 - If it is already a personal layout (a file you made in
-  `~/.config/herdr-app/layouts/`), use it and go to step 3.
+  `~/.config/herdr-app/layouts/`), use it and go to step 2.
 - If it is a shipped one, **ask first**, then clone it:
 
   ```sh
@@ -167,10 +134,10 @@ the layout that is shown.
   layouts. The Workbench column fits `main`'s shape; for another shipped layout,
   find a row to put it in by hand.
 
-Want to keep the shipped layout? Skip steps 2 and 3 and use the
-[fallback](#fallback-keep-the-shipped-layout).
+Want to keep the shipped layout? Skip this section and open the panel as a
+[pane](#using-the-panel-as-a-pane).
 
-### 3. Add the `git-workbench` column, once only
+#### 2. Add the `git-workbench` column, once only
 
 Read the personal layout, `~/.config/herdr-app/layouts/<name>.json`.
 
@@ -223,9 +190,9 @@ only, put it in a `"layout:<name>"` section instead of `global`. Note: Herdr add
 new default shortcuts only to an untouched `keys.json`; after any edit the whole
 file is yours, and later defaults must be added by hand.
 
-### Fallback: keep the shipped layout
+### Using the panel as a pane
 
-Without a personal layout, run **Git Workbench: Open Source Control beside this
+Without the layout column, run **Git Workbench: Open Source Control beside this
 pane** from the command palette, or from a terminal:
 
 ```sh
@@ -240,12 +207,6 @@ hides the layout column and does nothing in a pane: close the pane with
 To try the panel without any change, `herdr-app do mod.open
 '{"name":"herdr-app-git-workbench"}'` opens it as an overlay (run it again to
 close it).
-
-### Uninstall
-
-Delete the mod folder, remove the `git-workbench` node from your layout (or switch
-back with `Ctrl+Shift+L` and delete the clone's file), and remove any key you
-bound to it in `keys.json`. The palette entry goes with the mod folder.
 
 ## Keys
 
@@ -370,9 +331,11 @@ checked by hand in the running app. Results for Herdr Desktop 0.1.18 on Windows:
 
 ## Development
 
-The mod runs from a copy in `~/.config/herdr-app/mods/herdr-app-git-workbench`,
-kept in step with this repo by a sync script. A directory junction does not
-work: Herdr's hot reload ignores saves made behind one.
+Development needs Node 22. The mod is the folder `mods/herdr-app-git-workbench/`;
+everything else in the repository (tests, scripts, docs) stays out of Herdr. The
+mod runs from a copy in `~/.config/herdr-app/mods/herdr-app-git-workbench`, kept in
+step with that folder by a sync script. A directory junction does not work:
+Herdr's hot reload ignores saves made behind one.
 
 ```sh
 npm test         # core tests: node --test against temporary Git repositories
@@ -383,6 +346,7 @@ herdr-app do mod.open '{"name":"herdr-app-git-workbench"}'   # show it as an ove
 herdr-app shot shot.png
 ```
 
-`src/core/` is plain JavaScript with no Herdr imports and is what the tests drive;
-`src/ui/` and `main.js` are the Herdr views. See `GLOSSARY.md` for the terms used
+In the mod folder, `src/core/` is plain JavaScript with no Herdr imports and is
+what the tests drive; `src/ui/` and `main.js` are the Herdr views. The tests run
+the core through a Node platform port, `test/helpers/node-platform.js`. See `GLOSSARY.md` for the terms used
 in the code.

@@ -308,30 +308,24 @@ Implement as a native Herdr Desktop mod using:
 - Herdr's file APIs and folder watching where appropriate.
 - Herdr's theme API for colours and styling.
 
-Use a modular architecture:
+Use a modular architecture. The repository follows the herdr.dev layout for shared mods: the mod itself is one folder, `mods/herdr-app-git-workbench/`, holding only the files Herdr runs, so installing it is copying that folder. Tests, scripts and docs stay outside it.
 
 ```text
-herdr-app-git-workbench/
-├── mod.json
-├── main.js
-├── src/
-│   ├── git/
-│   │   ├── git-client.js
-│   │   ├── repository.js
-│   │   ├── status-parser.js
-│   │   ├── diff-parser.js
-│   │   └── git-operations.js
-│   ├── state/
-│   │   └── repository-state.js
-│   └── ui/
-│       ├── source-control.js
-│       ├── changes-list.js
-│       ├── diff-editor.js
-│       └── commit-history.js
-└── README.md
+herdr-app-git-workbench/                 repository
+├── mods/
+│   └── herdr-app-git-workbench/         the mod: copied as-is into ~/.config/herdr-app/mods/
+│       ├── mod.json
+│       ├── main.js
+│       └── src/
+│           ├── core/                    Git, status, diffs, history, lanes, queue, sync (no Herdr imports)
+│           └── ui/                      panel, Graph section, Diff view, Herdr platform
+├── test/                                node --test against temporary Git repositories
+│   └── helpers/node-platform.js         the core's platform port on Node
+├── scripts/dev-sync.mjs                 mirrors the mod folder into Herdr while developing
+├── README.md
+├── RECIPE.md
+└── preview.png
 ```
-
-The structure is illustrative. Adapt it to the conventions and module-loading capabilities of Herdr Desktop.
 
 Keep Git execution, repository state management and UI rendering logically separated.
 
@@ -403,8 +397,8 @@ The desktop application also uses `herdr-core` (`hc`) for terminal and agent man
 
 ### Development
 
-- Develop directly in a personal mod directory.
-- Use Herdr's hot reload while developing.
+- Develop in `mods/herdr-app-git-workbench/` and mirror it into the Herdr app home with `npm run dev`, which copies on every save so Herdr's hot reload picks it up. A symlink or directory junction does not work: hot reload ignores saves made behind one.
+- Node 22 is needed for development (tests and the sync script) only, never to install or run the mod.
 - Use the installed version's generated `herdr.d.ts` and `gpui-kit.d.ts` as the authoritative API references.
 - Prefer those over examples written for a different release.
 
@@ -422,7 +416,7 @@ The desktop application also uses `herdr-core` (`hc`) for terminal and agent man
 
 ### Deployment and publishing
 
-- Deploy by packaging the mod directory and installing it under the user's Herdr app home.
+- Install by copying `mods/herdr-app-git-workbench/` into `mods/` in the user's Herdr app home, by hand or by asking the Herdr agent to add the mod from its GitHub URL. No build step and no Node.
 - Publish the mod in a public GitHub repository named `herdr-app-git-workbench`.
 - Use the `herdr-mod` GitHub topic for discoverability.
 - Include a `README.md`, `RECIPE.md` and `preview.png`.

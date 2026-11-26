@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { graphKeyAction, moveGraphSelection, selectedItem, currentRow, pruneGraphSelection, nextRegion } from "../src/core/graph-keys.js";
-import { graphItems } from "../src/core/graph-items.js";
+import { graphKeyAction, moveGraphSelection, selectedItem, currentRow, pruneGraphSelection, nextRegion } from "../mods/herdr-app-git-workbench/src/core/graph-keys.js";
+import { graphItems } from "../mods/herdr-app-git-workbench/src/core/graph-items.js";
 
 const commit = (oid) => ({ key: `c:${oid}`, kind: "commit", oid, index: 0 });
 const file = (oid, path) => ({ key: `f:${oid}:${path}`, kind: "file", oid, index: 0, file: { path, status: "M", oldPath: null } });

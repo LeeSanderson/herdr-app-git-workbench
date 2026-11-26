@@ -5,12 +5,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { cleanup, initRepo, unbornRepo, tempDir, git, write } from "./helpers/repo.js";
-import { createWorkbench } from "../src/core/workbench.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
+import { createWorkbench } from "../mods/herdr-app-git-workbench/src/core/workbench.js";
+import { nodePlatform } from "./helpers/node-platform.js";
 
 after(cleanup);
 
-/** @param {string} folder @param {import("../src/core/platform.js").Platform} [platform] */
+/** @param {string} folder @param {import("../mods/herdr-app-git-workbench/src/core/platform.js").Platform} [platform] */
 async function follow(folder, platform = nodePlatform) {
   const workbench = createWorkbench(platform);
   await workbench.follow({ machine: null, folder });

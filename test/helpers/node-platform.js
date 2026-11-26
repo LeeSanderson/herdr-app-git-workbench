@@ -1,6 +1,6 @@
 // @ts-nocheck (Node-only; jsconfig has no Node types)
-// The platform port on Node, for tests. Never imported by the mod, and excluded
-// from dev-sync.
+// The platform port on Node, for tests. Lives outside the mod folder, so it is
+// never copied into Herdr.
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -28,7 +28,7 @@ export function memorySettings(store = new Map()) {
   };
 }
 
-/** @type {import("../core/platform.js").Platform} */
+/** @type {import("../../mods/herdr-app-git-workbench/src/core/platform.js").Platform} */
 export const nodePlatform = {
   ...memorySettings(),
 

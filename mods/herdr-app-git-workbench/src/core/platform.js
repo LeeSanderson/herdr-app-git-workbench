@@ -1,6 +1,6 @@
 // @ts-check
 // The platform port: everything the herdr-free core needs from its host.
-// Adapters: src/ui/herdr-platform.js (the mod) and src/adapters/node-platform.js (tests).
+// Adapters: src/ui/herdr-platform.js (the mod) and test/helpers/node-platform.js (tests).
 // Types only; nothing here runs.
 
 /**

@@ -6,8 +6,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { cleanup, initRepo, git, write, tempDir } from "./helpers/repo.js";
-import { createWorkbench } from "../src/core/workbench.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
+import { createWorkbench } from "../mods/herdr-app-git-workbench/src/core/workbench.js";
+import { nodePlatform } from "./helpers/node-platform.js";
 import { fakePlatform, followCounting, untilRefreshed, quiet, watchOf } from "./helpers/fake-platform.js";
 
 after(cleanup);

@@ -3,3 +3,6 @@ gpui-kit.d.ts
 
 node_modules/
 .claude/worktrees/
+
+# Written by herdr-app check into the folder it checks
+mods/*/jsconfig.json

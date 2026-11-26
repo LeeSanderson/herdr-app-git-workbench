@@ -1,7 +1,7 @@
 // @ts-check
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { layoutLanes } from "../src/core/lanes.js";
+import { layoutLanes } from "../mods/herdr-app-git-workbench/src/core/lanes.js";
 
 /** A commit literal: `c("b", "a")` is b with parent a. @param {string} oid @param {...string} parents */
 const c = (oid, ...parents) => ({ oid, parents });

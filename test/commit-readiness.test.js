@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commitReadiness } from "../src/core/commit.js";
+import { commitReadiness } from "../mods/herdr-app-git-workbench/src/core/commit.js";
 
 const change = (path, group) => ({ path, status: group === "conflicts" ? "U" : "M", group });
 const groups = ({ staged = 0, conflicts = 0 } = {}) => ({

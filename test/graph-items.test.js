@@ -1,7 +1,7 @@
 // @ts-check
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { graphItems } from "../src/core/graph-items.js";
+import { graphItems } from "../mods/herdr-app-git-workbench/src/core/graph-items.js";
 
 const commit = (/** @type {string} */ oid) => ({ oid, parents: [] });
 const commits = [commit("a"), commit("b"), commit("c")];

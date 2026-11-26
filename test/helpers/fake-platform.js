@@ -1,8 +1,8 @@
 // A platform with hand-fired file watches and a hand-advanced clock, for the
 // live-refresh and Graph refresh tests. Everything else is the real Node platform.
 import { samePath } from "./repo.js";
-import { createWorkbench } from "../../src/core/workbench.js";
-import { nodePlatform } from "../../src/adapters/node-platform.js";
+import { createWorkbench } from "../../mods/herdr-app-git-workbench/src/core/workbench.js";
+import { nodePlatform } from "./node-platform.js";
 
 /** Lets pending promise chains and I/O callbacks run. */
 export const settle = () => new Promise((r) => setImmediate(r));

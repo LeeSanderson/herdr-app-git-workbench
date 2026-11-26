@@ -1,10 +1,10 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { initRepo, git, write, lines, cleanup, docOf } from "./helpers/repo.js";
-import { createGit } from "../src/core/git.js";
-import { nodePlatform } from "../src/adapters/node-platform.js";
-import { diffTargetFor } from "../src/core/diff-target.js";
-import { loadDiff } from "../src/core/diff.js";
+import { createGit } from "../mods/herdr-app-git-workbench/src/core/git.js";
+import { nodePlatform } from "./helpers/node-platform.js";
+import { diffTargetFor } from "../mods/herdr-app-git-workbench/src/core/diff-target.js";
+import { loadDiff } from "../mods/herdr-app-git-workbench/src/core/diff.js";
 
 after(cleanup);
 
@@ -73,7 +73,7 @@ test("over the limit only the changed sections load, with gap rows carrying the 
 });
 
 test("gap rows split change blocks, so navigation still finds every change", async () => {
-  const { changeAnchors } = await import("../src/core/rows.js");
+  const { changeAnchors } = await import("../mods/herdr-app-git-workbench/src/core/rows.js");
   const root = initRepo({ files: { "big.txt": file(6000) } });
   write(root, "big.txt", file(6000, { 100: "a", 3000: "b", 5999: "c" }));
   const rows = (await load(root, "big.txt")).rows("split");

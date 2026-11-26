@@ -2,7 +2,7 @@
 // The Graph toolbar's sync buttons: labels, counts, enabled and primary.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { syncButtons } from "../src/core/sync.js";
+import { syncButtons } from "../mods/herdr-app-git-workbench/src/core/sync.js";
 
 /** A snapshot with only the fields the buttons read. */
 const snap = (over = {}) => ({ upstream: "origin/main", ahead: 0, behind: 0, detached: false, operation: "none", running: null, ...over });

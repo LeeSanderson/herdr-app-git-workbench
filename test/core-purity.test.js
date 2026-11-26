@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "core");
+const CORE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "mods", "herdr-app-git-workbench", "src", "core");
 
 const FORBIDDEN = [
   [/(?:from\s*|import\s*\(\s*|import\s+)["'](?:herdr|gpui-[^"']*)["']/, "imports herdr or gpui-*"],
