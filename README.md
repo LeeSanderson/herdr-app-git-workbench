@@ -77,6 +77,37 @@ the message names the remote and suggests running the same command (for example
 
 ## Install
 
+### Quick start
+
+You need [Herdr Desktop](https://herdr.dev), Git, and Node 22 (only for the copy
+script; see below to install without Node).
+
+```sh
+git clone https://github.com/LeeSanderson/herdr-app-git-workbench.git
+cd herdr-app-git-workbench
+npm run sync
+herdr-app check ~/.config/herdr-app/mods/herdr-app-git-workbench
+```
+
+Then press `Ctrl+Shift+P` in Herdr and run **Git Workbench: Open Source Control
+beside this pane**.
+
+**Without Node:** download the repository (on GitHub, **Code → Download ZIP**),
+make the folder `~/.config/herdr-app/mods/herdr-app-git-workbench`
+(`%USERPROFILE%\.config\herdr-app\mods\herdr-app-git-workbench` on Windows), and
+copy `main.js`, `mod.json` and `src/` into it. You can leave out `src/adapters/`.
+
+**With Herdr's agent:** ask it to "add the Herdr mod from
+https://github.com/LeeSanderson/herdr-app-git-workbench". Its installed guide
+covers adding mods from GitHub; it copies the mod folder and runs `herdr-app check`.
+
+**Update:** `git pull`, then `npm run sync` again (or copy the files again).
+
+To give the panel a column of its own in your layout, or a key to show and hide
+it, follow the full steps below.
+
+### Full steps
+
 These steps work for a person or an agent. They keep your own layout and keys.
 Steps 2 and 3 change Herdr's state, so an agent asks before each one.
 
@@ -91,7 +122,8 @@ are read-only. Without them, open it as a pane (see the
 The mod folder is `~/.config/herdr-app/mods/herdr-app-git-workbench`. It must be a
 **real folder**: a directory junction or symlink breaks Herdr's hot reload.
 
-From a clone of this repository (needs Node 22):
+From a clone of this repository (needs Node 22; see
+[Quick start](#quick-start) to install without Node):
 
 ```sh
 npm run sync
