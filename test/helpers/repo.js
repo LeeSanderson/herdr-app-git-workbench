@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -143,6 +144,29 @@ export async function unauthorisedRemote() {
   return {
     url: `http://127.0.0.1:${port}/repo.git`,
     close: () => new Promise((r) => server.close(() => r())),
+  };
+}
+
+/**
+ * A remote that accepts connections and never answers, as a dead server or a
+ * stalled network looks to Git.
+ */
+export async function silentRemote() {
+  /** @type {Set<import("node:net").Socket>} */
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => sockets.delete(socket));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+  return {
+    url: `http://127.0.0.1:${port}/repo.git`,
+    close: () => {
+      for (const s of sockets) s.destroy();
+      return new Promise((r) => server.close(() => r()));
+    },
   };
 }
 

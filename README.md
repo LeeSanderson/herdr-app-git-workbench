@@ -69,11 +69,22 @@ Upstream disables Pull. Fetch is always available while nothing else runs.
 
 **Sign-in:** a sync can open a Git Credential Manager window, which may hide
 behind Herdr. After about 15 seconds the running label adds "still waiting — a
-sign-in window may be open". A sync times out after 10 minutes. A timeout can't
-show Git's output: Herdr's `exec()` drops the output of a command it stops, so
-**Details** shows only the timeout. If sign-in fails,
+sign-in window may be open". If sign-in fails,
 the message names the remote and suggests running the same command (for example
 `git fetch`) in a terminal once; **Details** shows Git's full output.
+
+**Stalls and timeouts:** a sync asks Git to give up on an HTTP(S) remote that
+sends nothing for 2 minutes (`http.lowSpeedLimit=1`, `http.lowSpeedTime=120`),
+and then says the sync stalled. Waiting for sign-in doesn't count as a stall. If
+you set `http.lowSpeedLimit` or `http.lowSpeedTime` yourself (also per URL), the
+Workbench uses yours. SSH remotes aren't covered.
+
+A sync times out after 10 minutes. The message then says Git may still be
+running: Herdr stops waiting, but on Windows it can't stop Git itself. If a
+sign-in window is still open, finishing sign-in lets the sync complete, and for a
+Pull that includes its merge or rebase; closing the window cancels it. A timeout
+can't show Git's output: Herdr's `exec()` drops the output of a command it stops,
+so **Details** shows only the timeout.
 
 ## Install
 
@@ -308,7 +319,9 @@ sends it; don't bind it.
   a terminal.
 - **No background fetch.** The Graph shows remote commits as of your last Fetch.
 - **A sync cannot be cancelled.** A timed-out sync can't show Git's output, because
-  `exec()` drops it on a timeout; its Details show only the timeout.
+  `exec()` drops it on a timeout; its Details show only the timeout. On Windows a
+  timed-out sync's Git keeps running (see [Sync](#sync)): Herdr's `exec()` stops
+  only the process it started, not Git's own child processes.
 - Out of scope for this version: amend, branch management, hunk staging, stash and
   worktree management.
 
@@ -324,10 +337,11 @@ checked by hand in the running app. Results for Herdr Desktop 0.1.18 on Windows:
 | `pane.go` moves focus onto the panel, and the panel keys work | Pending: needs a person at the keyboard |
 | How many events `watchFolder` delivers for one change (e.g. a save, a `git commit`) | A save: 1 batch (now and then 2). `git add`: 2 batches. `git commit`: 1 batch of about 20 paths (objects, locks, refs, logs, index). Each burst gives one refresh (400 ms debounce). On Windows the paths come in verbatim form (`\\?\C:\...`); the filter accepts it. |
 | `"place": "none"`: showing a personal layout does not auto-dock a second copy | Pass: a personal layout with the `git-workbench` block shows that one copy only; `main` shows none |
-| Graph lane colours in light and dark themes; scrolling speed | Pending |
+| Graph lane colours in light and dark themes | Pass: lanes, merge curves and badges are distinct and readable in `paper` (light) and in `graphite`, `ink`, `moss` and `atom-one-dark` |
+| Graph scrolling speed | Pending: needs a person with a mouse or trackpad |
 | Git Credential Manager sign-in from Fetch/Push, end to end | Pending |
-| A sync timeout ends the `git` child process | Pending |
-| Graph load time for a few thousand commits | Pending |
+| A sync timeout ends the `git` child process | **Fail.** On a timeout, `exec()` rejects ("took longer than … and was stopped") but stops only the process it started, Git for Windows' `cmd\git.exe` launcher. The real `git.exe` and its helpers (`git-remote-http.exe`, and so a sign-in window) keep running. Seen with a 5 s timeout against a server that never answers: all three were still running 30 s later. The mod can't stop them (it gets no process ids), so syncs now give up on a stalled HTTP remote by themselves, and the timeout message says Git may still be running. A sign-in window left open is still not stopped. |
+| Graph load time for a few thousand commits | Pass: 5,000 commits with merges, 1,873 branches and 30 tags. The first page shows in under 1 s in the app. Git's query takes 0.5 s, about half of that Git's start-up on Windows; with 1,900 loose (unpacked) refs it takes 3–4 s, because `%D` reads every ref (`git pack-refs` or `git gc` fixes that). Lane layout of all 5,000 commits takes 40–115 ms under Node. |
 
 ## Development
 

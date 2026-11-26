@@ -24,11 +24,18 @@ export class GitNotFound extends Error {
 export class GitTimeout extends Error {
   /** @param {string[]} args @param {number} timeout */
   constructor(args, timeout) {
-    super(`git ${args[0] ?? ""} timed out after ${Math.round(timeout / 1000)} s`);
+    super(`git ${subcommand(args)} timed out after ${Math.round(timeout / 1000)} s`);
     this.name = "GitTimeout";
     this.args = args;
     this.timeout = timeout;
   }
+}
+
+/** The git subcommand in `args`, after any leading `-c name=value` pairs. @param {string[]} args */
+function subcommand(args) {
+  let i = 0;
+  while (args[i] === "-c") i += 2;
+  return args[i] ?? "";
 }
 
 export const TIMEOUTS = { short: 30_000, graph: 60_000, long: 600_000 };

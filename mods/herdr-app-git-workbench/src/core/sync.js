@@ -36,7 +36,7 @@ import { GitTimeout } from "./git.js";
 /**
  * A failure class: matched from Git's text by FAILURE_RULES, or reported by the
  * command itself ("conflicts", "no-publish-remote"). Each has a FAILURE_MESSAGES entry.
- * @typedef {"auth" | "rejected-push" | "no-upstream" | "divergence" | "would-overwrite" | "conflicts" | "no-publish-remote"} FailureKind
+ * @typedef {"auth" | "stalled" | "rejected-push" | "no-upstream" | "divergence" | "would-overwrite" | "conflicts" | "no-publish-remote"} FailureKind
  */
 
 /**
@@ -165,10 +165,10 @@ async function publish(ctx, branch) {
 
 /**
  * A recognised failure: its class, plus what its message needs.
- * @typedef {{ kind: FailureKind, remote: string | null, branch?: string, files?: number }} SyncFailure
+ * @typedef {{ kind: FailureKind, remote: string | null, branch?: string, files?: number, seconds?: number }} SyncFailure
  *   `remote` is the remote the failure names (or the command reported), if known;
  *   `branch` the branch the command acted on, when it says; `files` how many
- *   files the failure is about, when known.
+ *   files the failure is about, when known; `seconds` the stall limit a "stalled" sync hit.
  */
 
 /**
@@ -189,6 +189,11 @@ export const FAILURE_RULES = [
       /Permission denied \(publickey/,
       /Host key verification failed/,
     ],
+  },
+  {
+    // Git gave up under the sync's stall limit (curl's "Operation too slow").
+    kind: "stalled",
+    match: [/Operation too slow/],
   },
   {
     // The remote has commits the branch doesn't.
@@ -225,6 +230,9 @@ export const FAILURE_RULES = [
 export const FAILURE_MESSAGES = {
   auth: ({ remote }, op) => ({
     summary: `Couldn't sign in to ${remote ?? "the remote"}. Check your credentials (try \`git ${op.verb.toLowerCase()}\` in a terminal once)`,
+  }),
+  stalled: ({ remote, seconds }, op) => ({
+    summary: `${op.verb} stalled: ${remote ?? "the remote"} sent nothing for ${duration(seconds ?? STALL_SECONDS)}. Check your connection, then try again`,
   }),
   "rejected-push": () => ({
     summary: "Push rejected: the remote has commits you don't have. Pull first",
@@ -303,6 +311,32 @@ export function syncButtons(s) {
   };
 }
 
+/**
+ * Seconds an HTTP transfer may move no data before Git gives up on it. A
+ * timeout can't stop Git (Herdr's exec() leaves Git's own processes running on
+ * Windows), so a sync asks Git to stop by itself instead. Waiting for sign-in
+ * moves no data over HTTP, so this doesn't cut a sign-in short.
+ */
+export const STALL_SECONDS = 120;
+
+/**
+ * Git's `-c` flags for a stall of `seconds`: give up when under 1 byte/s for that long.
+ * @param {number} seconds @returns {string[]}
+ */
+const stallFlags = (seconds) => ["-c", "http.lowSpeedLimit=1", "-c", `http.lowSpeedTime=${seconds}`];
+
+/**
+ * Has the user set a stall limit of their own (`http.lowSpeedLimit`/`Time`, also per URL)?
+ * @param {SyncContext} ctx @returns {Promise<boolean>}
+ */
+async function ownStallConfig(ctx) {
+  const r = await ctx.run(["config", "--get-regexp", "^http\\..*lowspeed(limit|time)$"], { read: true });
+  return r.ok && r.stdout.trim() !== "";
+}
+
+/** "45 s", "2 min". @param {number} seconds */
+const duration = (seconds) => (seconds >= 120 && seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} s`);
+
 /** How long a sync runs before its label adds the sign-in hint. */
 export const WAITING_HINT_MS = 15_000;
 /** Added to the running label after WAITING_HINT_MS: Git Credential Manager's window may be hidden. */
@@ -310,11 +344,19 @@ export const WAITING_HINT = "still waiting — a sign-in window may be open";
 
 /**
  * The message of a sync that hit its timeout. exec() loses Git's partial output
- * on a timeout, so the detail is the timeout itself.
+ * on a timeout, so the detail is the timeout itself, then what it means: Herdr
+ * stops waiting, but Git may carry on (on Windows it does), so a sign-in finished
+ * later still completes the sync.
  * @param {SyncOp} op @param {GitTimeout} err @returns {ActionError}
  */
 function timedOut(op, err) {
-  return { summary: `${op.verb} timed out after ${Math.round(err.timeout / 60_000)} min (sign-in not completed?)`, detail: err.message };
+  const verb = op.verb.toLowerCase();
+  const rest = op === SYNC_OPS.pull ? ", including its merge or rebase" : "";
+  return {
+    summary: `${op.verb} timed out after ${Math.round(err.timeout / 60_000)} min. Git may still be running (a sign-in window may be open)`,
+    detail: `${err.message}\n\nThe Workbench stopped waiting, but Git may still be running: Herdr can't always stop it. ` +
+      `If a sign-in window is open, finishing sign-in lets the ${verb} complete${rest}; closing the window cancels it.`,
+  };
 }
 
 /**
@@ -325,16 +367,22 @@ function timedOut(op, err) {
  * output. Throws only GitNotFound.
  * @param {{
  *   git: Git, machine: string | null, cwd: string, timeoutClass: import("./git.js").TimeoutClass,
- *   sleep: (ms: number) => Promise<void>, relabel: (label: string) => void,
+ *   sleep: (ms: number) => Promise<void>, relabel: (label: string) => void, stallSeconds?: number,
  * }} deps
+ *   Each of the sync's Git commands gives up after `stallSeconds` (default STALL_SECONDS)
+ *   without data, unless the user has a stall limit of their own.
  * @param {SyncOp} op @param {Record<string, unknown>} options
  * @returns {Promise<ActionError | null>}
  */
-export async function runSync({ git, machine, cwd, timeoutClass, sleep, relabel }, op, options) {
+export async function runSync({ git, machine, cwd, timeoutClass, sleep, relabel, stallSeconds = STALL_SECONDS }, op, options) {
+  /** @type {string[]} */
+  let stall = [];
   /** @type {SyncContext} */
   const ctx = {
-    run: (args, { read = false } = {}) => git.run(machine, args, { cwd, timeoutClass: read ? "short" : timeoutClass, read }),
+    run: (args, { read = false } = {}) =>
+      git.run(machine, read ? args : [...stall, ...args], { cwd, timeoutClass: read ? "short" : timeoutClass, read }),
   };
+  if (!(await ownStallConfig(ctx))) stall = stallFlags(stallSeconds);
   let finished = false;
   void sleep(WAITING_HINT_MS).then(() => {
     if (!finished) relabel(`${op.running} ${WAITING_HINT}`);
@@ -352,5 +400,6 @@ export async function runSync({ git, machine, cwd, timeoutClass, sleep, relabel 
   const output = [r.stderr.trim(), r.stdout.trim()].filter(Boolean).join("\n");
   const raw = actionError(output, `git ${op.verb.toLowerCase()} failed`);
   const failure = r.kind ? { kind: r.kind, remote: r.remote ?? null, branch: r.branch, files: r.files } : classifyFailure(output, r.remote ?? null);
+  if (failure?.kind === "stalled") failure.seconds = stallSeconds;
   return failure ? { ...FAILURE_MESSAGES[failure.kind](failure, op), detail: raw.detail } : raw;
 }

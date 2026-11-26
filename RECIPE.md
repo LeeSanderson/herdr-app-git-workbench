@@ -87,8 +87,12 @@ change, or a file of a commit, opens a side-by-side (or inline) diff.
   the divergence message's one-off buttons pass `--no-rebase --ff` or `--rebase`.
   Conflicts are read from `ls-files --unmerged` after the pull. Push: plain `git
   push` with an Upstream, else Publish `push --set-upstream <remote> HEAD`.
-  Failures are classified by Git's text (auth, rejected push, no Upstream,
+  Each sync's Git commands get `-c http.lowSpeedLimit=1 -c http.lowSpeedTime=120`
+  unless `git config --get-regexp '^http\..*lowspeed(limit|time)$'` finds the user's own.
+  Failures are classified by Git's text (auth, stalled, rejected push, no Upstream,
   divergence, would overwrite) into the error strip, with Git's output in Details.
+  A timeout says Git may still be running (finishing sign-in completes the sync,
+  a Pull's merge or rebase included).
   After 15 s the running label adds the sign-in hint. Status and the Graph refresh
   after every sync.
 - Diff keys: `n`/`F7`, `p`/`Shift+F7`, `←`/`→`/`Home` pan, `i` mode, `r` reload.
@@ -162,7 +166,9 @@ install step for the Graph.
   `w_full()` rows; in a `mod.open` overlay, absolutely positioned lists collapse.
 - No syntax highlighting (no tokenizer for mods), no 3-way merge.
 - `exec()` can't stream or cancel: no `--progress`, and a timed-out sync loses
-  Git's partial output. Git Credential Manager's window can open behind Herdr.
+  Git's partial output. On Windows its timeout stops only the process it started
+  (Git for Windows' `cmd\git.exe` launcher); Git's own processes run on, hence the
+  stall limit. Git Credential Manager's window can open behind Herdr.
 - Git's sync failures share exit codes; classify by text (`FAILURE_RULES` in
   `src/core/sync.js`, from git 2.45.2). Localised Git falls back to its first line.
 - No commit actions, Abort/Continue or background fetch in the Graph.
