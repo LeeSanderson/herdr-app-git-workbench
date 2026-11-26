@@ -333,12 +333,12 @@ checked by hand in the running app. Results for Herdr Desktop 0.1.18 on Windows:
 
 | Check | Result |
 |---|---|
-| `Ctrl+Enter` in the commit box reaches the `Input` and commits | Pending: needs a person at the keyboard |
-| `pane.go` moves focus onto the panel, and the panel keys work | Pending: needs a person at the keyboard |
+| `Ctrl+Enter` in the commit box reaches the `Input` and commits | Pass |
+| `pane.go` moves focus onto the panel, and the panel keys work | Pass: `Alt+←`/`Alt+→` move focus onto the panel and back; the list, commit box and Graph keys all work. Tab out of the commit box needed its own key binding, since the textarea binds Tab to indent |
 | How many events `watchFolder` delivers for one change (e.g. a save, a `git commit`) | A save: 1 batch (now and then 2). `git add`: 2 batches. `git commit`: 1 batch of about 20 paths (objects, locks, refs, logs, index). Each burst gives one refresh (400 ms debounce). On Windows the paths come in verbatim form (`\\?\C:\...`); the filter accepts it. |
 | `"place": "none"`: showing a personal layout does not auto-dock a second copy | Pass: a personal layout with the `git-workbench` block shows that one copy only; `main` shows none |
 | Graph lane colours in light and dark themes | Pass: lanes, merge curves and badges are distinct and readable in `paper` (light) and in `graphite`, `ink`, `moss` and `atom-one-dark` |
-| Graph scrolling speed | Pending: needs a person with a mouse or trackpad |
+| Graph scrolling speed | Pass: scrolling feels natural |
 | Git Credential Manager sign-in from Fetch/Push, end to end | Pending |
 | A sync timeout ends the `git` child process | **Fail.** On a timeout, `exec()` rejects ("took longer than … and was stopped") but stops only the process it started, Git for Windows' `cmd\git.exe` launcher. The real `git.exe` and its helpers (`git-remote-http.exe`, and so a sign-in window) keep running. Seen with a 5 s timeout against a server that never answers: all three were still running 30 s later. The mod can't stop them (it gets no process ids), so syncs now give up on a stalled HTTP remote by themselves, and the timeout message says Git may still be running. A sign-in window left open is still not stopped. |
 | Graph load time for a few thousand commits | Pass: 5,000 commits with merges, 1,873 branches and 30 tags. The first page shows in under 1 s in the app. Git's query takes 0.5 s, about half of that Git's start-up on Windows; with 1,900 loose (unpacked) refs it takes 3–4 s, because `%D` reads every ref (`git pack-refs` or `git gc` fixes that). Lane layout of all 5,000 commits takes 40–115 ms under Node. |

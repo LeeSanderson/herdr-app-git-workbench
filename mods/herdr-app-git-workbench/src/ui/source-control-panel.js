@@ -47,6 +47,29 @@ function nextChange(workbench) {
  */
 const places = createPlaceTracker();
 
+/** The commit box's key context, and the actions Tab and Shift+Tab dispatch in it. */
+const COMMIT_BOX_CONTEXT = "GitWorkbenchCommitBox";
+const NEXT_REGION = "git-workbench-commit-box-next";
+const PREV_REGION = "git-workbench-commit-box-prev";
+let commitBoxKeysBound = false;
+
+/**
+ * Tab and Shift+Tab leave the commit box. The textarea binds them to indent and
+ * outdent (gpui-component's "Input" context), and a key binding runs before any
+ * on_key_down handler, so an on_key_down can't see them. These bindings match at
+ * the textarea's own depth and are added later, so they win.
+ * @param {import("gpui-kit").Context} cx
+ */
+function bindCommitBoxKeys(cx) {
+  if (commitBoxKeysBound) return;
+  commitBoxKeysBound = true;
+  const context = `${COMMIT_BOX_CONTEXT} > Input`;
+  cx.bind_keys([
+    { keystroke: "tab", action: NEXT_REGION, context },
+    { keystroke: "shift-tab", action: PREV_REGION, context },
+  ]);
+}
+
 export class SourceControlPanel {
   /** @param {Workbench} workbench @param {import("gpui-kit").Context} cx */
   constructor(workbench, cx) {
@@ -85,6 +108,7 @@ export class SourceControlPanel {
     this.typing = false;
     this.message.on("focus", () => { this.typing = true; });
     this.message.on("blur", () => { this.typing = false; });
+    bindCommitBoxKeys(cx);
     cx.spawn(async (cx) => {
       for (;;) {
         await nextChange(workbench);
@@ -419,21 +443,28 @@ export class SourceControlPanel {
   commitBox(t, snapshot) {
     const { ready, status } = commitReadiness(snapshot.groups, this.message.value());
     const enabled = ready && snapshot.running === null;
+    /** @param {"tab" | "shift-tab"} keystroke @param {import("gpui-kit").Context} cx */
+    const leave = (keystroke, cx) => {
+      const region = nextRegion("commit-box", keystroke);
+      if (!region) return;
+      cx.stop_propagation();
+      this.focusRegion(region);
+      cx.notify();
+    };
     return v_flex().id("commit-box").flex_none().p(10).gap(6).border_t_1().border_color(t.border).bg(t.chrome)
-      // Fallback for Ctrl+Enter in case the textarea doesn't report it as a secondary submit.
-      // Tab goes on to the Graph, Shift+Tab back to the Change list.
+      // Tab goes on to the Graph, Shift+Tab back to the Change list (see bindCommitBoxKeys).
+      .key_context(COMMIT_BOX_CONTEXT)
+      .on_action(NEXT_REGION, (_e, cx) => leave("tab", cx))
+      .on_action(PREV_REGION, (_e, cx) => leave("shift-tab", cx))
+      // Fallback for Ctrl+Enter in case the textarea doesn't report it as a secondary submit,
+      // and for Tab should the textarea ever stop binding it.
       .on_key_down((e, cx) => {
         if (e.keystroke === "ctrl-enter" || e.keystroke === "cmd-enter") {
           cx.stop_propagation();
           this.commit();
           return;
         }
-        const region = nextRegion("commit-box", e.keystroke);
-        if (region) {
-          cx.stop_propagation();
-          this.focusRegion(region);
-          cx.notify();
-        }
+        if (e.keystroke === "tab" || e.keystroke === "shift-tab") leave(e.keystroke, cx);
       })
       .child(Textarea.new(this.message))
       .child(h_flex().gap(8).items_center()
