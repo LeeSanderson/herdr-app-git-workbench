@@ -8,7 +8,8 @@
 // The mode (split | inline) is one shared setting for every Diff view. Keys are
 // handled with on_key_down on the view's focus handle (not keys.json):
 // i toggles the mode; e toggles Folds; n / f7 and p / shift-f7 jump to the next /
-// previous change; r reloads.
+// previous change; r reloads. The first load goes to the first change as `n`
+// would; live reloads leave the view where it is.
 //
 // Folds (core/rows.js foldRows) hide long runs of unchanged lines. Whether they are
 // collapsed is one shared setting like the mode, collapsed unless set to "open".
@@ -35,6 +36,7 @@ import { claimTab } from "./diff-tabs.js";
 import { displaySegments } from "../core/display.js";
 import { changeAnchors, foldRows } from "../core/rows.js";
 import { createLiveDiff } from "../core/live-diff.js";
+import { createChangeCursor } from "../core/change-cursor.js";
 
 /** @typedef {import("../core/diff-target.js").DiffTarget} DiffTarget */
 /** @typedef {import("../core/rows.js").SplitRow} SplitRow */
@@ -144,8 +146,8 @@ export class DiffView {
     this.live = null;
     this.scroll = VirtualListScrollHandle.new();
     this.handle = cx.focus_handle();
-    /** The change block the navigator is on; -1 before the first jump. */
-    this.current = -1;
+    /** The change block the navigator is on. */
+    this.cursor = createChangeCursor();
     /** The column offset shared by every row's text. */
     this.pan = 0;
     /** The rows area's width in px, from the last mouse event over it; null until then. */
@@ -166,9 +168,11 @@ export class DiffView {
       claimTab(this.target);
       const live = (this.live = createLiveDiff(workbench, this.target));
       // Re-render after every load and stale change, until the tab closes.
+      // The first document brings its first change into view, as `n` would.
       cx.spawn(async (cx) => {
         while (this.live === live) {
           await new Promise((resolve) => { const off = live.onChange(() => { off(); resolve(undefined); }); });
+          if (live.doc && this.cursor.loaded(this.anchors(diffMode()).length)) this.showCurrent();
           cx.notify();
         }
       });
@@ -244,20 +248,23 @@ export class DiffView {
     this.opened = new Set(this.opened).add(id);
   }
 
+  /** The change block the navigator is on; -1 before the first jump. */
+  get current() {
+    return this.cursor.current;
+  }
+
   /**
-   * Jumps `delta` changes from the current one, wrapping from last to first,
-   * and centres it. Before the first jump, next goes to the first change and
-   * previous to the last.
+   * Jumps `delta` changes from the current one (see core/change-cursor.js) and
+   * brings it into view.
    * @param {1 | -1} delta
    */
   go(delta) {
-    const anchors = this.anchors(diffMode());
-    const n = anchors.length;
-    if (!n) return;
-    this.current = this.current < 0 || this.current >= n
-      ? (delta > 0 ? 0 : n - 1)
-      : (this.current + delta + n) % n;
-    this.scroll.scroll_to_item(anchors[this.current], "center");
+    if (this.cursor.go(delta, this.anchors(diffMode()).length)) this.showCurrent();
+  }
+
+  /** Centres the current change and pans to its first changed column. */
+  showCurrent() {
+    this.recentre();
     this.panToChange(diffMode());
   }
 
