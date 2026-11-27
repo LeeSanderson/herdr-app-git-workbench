@@ -56,6 +56,8 @@ const setDiffMode = (mode) => setShared(MODE_KEY, mode);
 /** The shared key of whether Folds are collapsed ("open" shows every line). */
 const FOLDS_KEY = "gitwb.diffFolds";
 const foldsCollapsed = () => shared(FOLDS_KEY) !== "open";
+/** A Fold row's list key is this prefix and the Fold's id. */
+const FOLD_KEY = "fold-";
 
 const NEXT_KEYS = new Set(["n", "f7"]);
 const PREV_KEYS = new Set(["p", "shift-f7"]);
@@ -483,8 +485,16 @@ export class DiffView {
       : r.kind === "fold" ? this.foldRow(t, r, h)
       : mode === "inline" ? this.inlineRow(t, r, h, gutterW)
       : this.splitRow(t, r, h, gutterW);
-    const list = v_virtual_list("diff-rows", rows.length, h, (i) => String(i),
+    // A Fold's key names it, so the list's one click handler can open it (a row
+    // can't have its own on_click: Herdr refuses handlers from the item renderer).
+    const list = v_virtual_list("diff-rows", rows.length, h,
+      (i) => rows[i].kind === "fold" ? `${FOLD_KEY}${rows[i].id}` : String(i),
       (range) => rows.slice(range.start, range.end).map(render))
+      .on_item_click((key, cx) => {
+        if (!key.startsWith(FOLD_KEY)) return;
+        this.openFold(Number(key.slice(FOLD_KEY.length)));
+        cx.notify();
+      })
       .track_scroll(this.scroll)
       .size_full();
     return v_flex().flex_1().min_h(0)
@@ -539,12 +549,11 @@ export class DiffView {
       .when(!!row.title, (e) => e.child(div().min_w(0).truncate().text_color(t.muted).child(row.title)));
   }
 
-  /** A Fold: `⋯ N unchanged lines`; clicking opens it. @param {Record<string, string>} t @param {FoldRow} row @param {number} h */
+  /** A Fold: `⋯ N unchanged lines`; clicking opens it (see `body`). @param {Record<string, string>} t @param {FoldRow} row @param {number} h */
   foldRow(t, row, h) {
-    return h_flex().id(`fold-${row.id}`).w_full().h(h).flex_none().items_center().gap(8).overflow_hidden()
+    return h_flex().w_full().h(h).flex_none().items_center().gap(8).overflow_hidden()
       .bg(t.raised).text_color(t.muted).text_size(11).cursor_pointer()
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .on_click((_e, cx) => { cx.stop_propagation(); this.openFold(row.id); cx.notify(); })
       .child(this.marker(t, undefined))
       .child(div().flex_none().pl(8).child(unchanged(row.count)));
   }
