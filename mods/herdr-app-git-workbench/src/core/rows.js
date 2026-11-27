@@ -55,6 +55,52 @@ export function changeAnchors(rows) {
 }
 
 /**
+ * A Fold: a run of unchanged rows shown as one row. `id` is the new-side line
+ * number of its first hidden line, the same in both modes; it names the Fold for opening it.
+ * @typedef {{ kind: "fold", id: number, count: number }} FoldRow
+ */
+
+/** A context row's new-side line number, in either mode. @param {any} r @returns {number | undefined} */
+const newLine = (r) => r.right?.line ?? r.b;
+
+/** Unchanged lines kept visible beside each change (git's default context). */
+export const FOLD_CONTEXT = 3;
+/** The fewest lines worth hiding in a Fold. */
+export const FOLD_MIN = 4;
+
+/**
+ * The rows with each long run of context rows folded, except the Folds named
+ * in `opened`. Context stays beside changes only: a run at the file's edge or
+ * next to an Unloaded section (gap row) keeps none on that side.
+ * Works for rows of either mode.
+ * @template {{ kind: string }} R
+ * @param {readonly R[]} rows @param {ReadonlySet<number>} opened Fold ids
+ * @returns {readonly (R | FoldRow)[]}
+ */
+export function foldRows(rows, opened) {
+  /** @type {(R | FoldRow)[]} */
+  const out = [];
+  /** A change row: neither context nor an Unloaded section. @param {R | undefined} r */
+  const isChange = (r) => !!r && r.kind !== "ctx" && r.kind !== "gap";
+  for (let i = 0; i < rows.length;) {
+    if (rows[i].kind !== "ctx") {
+      out.push(rows[i++]);
+      continue;
+    }
+    let end = i;
+    while (end < rows.length && rows[end].kind === "ctx") end++;
+    const from = i + (isChange(rows[i - 1]) ? FOLD_CONTEXT : 0);
+    const to = end - (isChange(rows[end]) ? FOLD_CONTEXT : 0);
+    const id = to - from >= FOLD_MIN ? newLine(rows[from]) : undefined;
+    if (id !== undefined && !opened.has(id)) {
+      out.push(...rows.slice(i, from), { kind: "fold", id, count: to - from }, ...rows.slice(to, end));
+    } else out.push(...rows.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+
+/**
  * The common prefix and suffix lengths of two lines; they never overlap.
  * What lies between them is the changed part.
  * @param {string} x @param {string} y

@@ -7,8 +7,12 @@
 //
 // The mode (split | inline) is one shared setting for every Diff view. Keys are
 // handled with on_key_down on the view's focus handle (not keys.json):
-// i toggles the mode; n / f7 and p / shift-f7 jump to the next / previous change;
-// r reloads.
+// i toggles the mode; e toggles Folds; n / f7 and p / shift-f7 jump to the next /
+// previous change; r reloads.
+//
+// Folds (core/rows.js foldRows) hide long runs of unchanged lines. Whether they are
+// collapsed is one shared setting like the mode, collapsed unless set to "open".
+// Clicking a Fold opens it until the document next loads; only the setting persists.
 //
 // The document is live (core/live-diff.js): it reloads on every snapshot change of
 // its Repository, and keeps its last content under a stale band once that
@@ -29,13 +33,14 @@ import { statusLetter, statusColor, printable, band, iconButton } from "./widget
 import { folderOf, nameOf } from "../core/status.js";
 import { claimTab } from "./diff-tabs.js";
 import { displaySegments } from "../core/display.js";
-import { changeAnchors } from "../core/rows.js";
+import { changeAnchors, foldRows } from "../core/rows.js";
 import { createLiveDiff } from "../core/live-diff.js";
 
 /** @typedef {import("../core/diff-target.js").DiffTarget} DiffTarget */
 /** @typedef {import("../core/rows.js").SplitRow} SplitRow */
 /** @typedef {import("../core/rows.js").InlineRow} InlineRow */
 /** @typedef {import("../core/rows.js").GapRow} GapRow */
+/** @typedef {import("../core/rows.js").FoldRow} FoldRow */
 /** @typedef {import("../core/rows.js").Half} Half */
 /** @typedef {import("../core/rows.js").RowMode} RowMode */
 
@@ -45,6 +50,10 @@ const MODE_KEY = "gitwb.diffMode";
 const diffMode = () => (shared(MODE_KEY) === "inline" ? "inline" : "split");
 /** @param {RowMode} mode */
 const setDiffMode = (mode) => setShared(MODE_KEY, mode);
+
+/** The shared key of whether Folds are collapsed ("open" shows every line). */
+const FOLDS_KEY = "gitwb.diffFolds";
+const foldsCollapsed = () => shared(FOLDS_KEY) !== "open";
 
 const NEXT_KEYS = new Set(["n", "f7"]);
 const PREV_KEYS = new Set(["p", "shift-f7"]);
@@ -108,6 +117,23 @@ function longest(rows) {
   return n;
 }
 
+/** `⋯ N unchanged lines`. @param {number} count */
+const unchanged = (count) => `⋯ ${thousands(count)} unchanged line${count === 1 ? "" : "s"}`;
+
+/**
+ * A segmented switch of `options` ([value, label]) with `value` selected.
+ * @param {Record<string, string>} t @param {string} id @param {[string, string][]} options
+ * @param {string} value @param {(value: string) => void} pick
+ */
+function segmented(t, id, options, value, pick) {
+  return h_flex().flex_none().p(2).gap(2).rounded(6).bg(t.raised)
+    .children(options.map(([v, label]) => div().id(`${id}-${v}`).px(8).h(20).flex().items_center().rounded(4).text_size(11).cursor_pointer()
+      .when(value === v, (e) => e.bg(t.background).text_color(t.foreground).font_semibold())
+      .when(value !== v, (e) => e.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
+      .on_click((_e, cx) => { cx.stop_propagation(); pick(v); cx.notify(); })
+      .child(label)));
+}
+
 export class DiffView {
   /** @param {ReturnType<import("../core/workbench.js").createWorkbench>} workbench @param {import("gpui-kit").Context} cx */
   constructor(workbench, cx) {
@@ -128,6 +154,12 @@ export class DiffView {
     this.drag = null;
     /** Text columns visible this render; set by `body` before any row renders. */
     this.cols = 80;
+    /** The Folds opened by hand (ids) in `openedFor`. @type {Set<number>} */
+    this.opened = new Set();
+    /** The document `opened` belongs to: a new load closes every Fold again. @type {object | null} */
+    this.openedFor = null;
+    /** The last shown rows and what they were made from. @type {{ key: unknown[], rows: readonly any[] } | null} */
+    this.shownCache = null;
     // A new Diff tab takes the keyboard so n/p/i work straight away (unverified in the app).
     this.handle.focus();
     if (this.target) {
@@ -164,9 +196,52 @@ export class DiffView {
     this.live = null;
   }
 
+  /**
+   * The rows on screen in `mode`: the document's rows, folded unless Folds are open.
+   * @param {RowMode} mode @returns {readonly any[]}
+   */
+  shown(mode) {
+    const doc = this.doc;
+    if (!doc) return [];
+    if (this.openedFor !== doc) {
+      this.openedFor = doc;
+      this.opened = new Set();
+    }
+    const collapsed = foldsCollapsed();
+    const key = [doc, mode, collapsed, this.opened];
+    const c = this.shownCache;
+    if (c && c.key.every((k, i) => k === key[i])) return c.rows;
+    const rows = collapsed ? foldRows(doc.rows(mode), this.opened) : doc.rows(mode);
+    this.shownCache = { key, rows };
+    return rows;
+  }
+
   /** The navigation anchors (first row of each change block) for `mode`. @param {RowMode} mode */
   anchors(mode) {
-    return this.doc ? changeAnchors(this.doc.rows(mode)) : [];
+    return changeAnchors(this.shown(mode));
+  }
+
+  /** Centres the current change, if any (after the rows above it changed). */
+  recentre() {
+    const anchor = this.anchors(diffMode())[this.current];
+    if (anchor !== undefined) this.scroll.scroll_to_item(anchor, "center");
+  }
+
+  /** Collapses or opens every Fold; collapsing closes the ones opened by hand. @param {boolean} collapsed */
+  setFolds(collapsed) {
+    if (collapsed === foldsCollapsed()) return;
+    this.opened = new Set();
+    setShared(FOLDS_KEY, collapsed ? "collapsed" : "open");
+    this.recentre();
+  }
+
+  /**
+   * Opens one Fold. Its row gives way to the first line it hid, at the same
+   * index, so the rows above it (and so the scroll position) don't move.
+   * @param {number} id
+   */
+  openFold(id) {
+    this.opened = new Set(this.opened).add(id);
   }
 
   /**
@@ -256,8 +331,7 @@ export class DiffView {
     if (mode === diffMode()) return;
     setDiffMode(mode);
     // Keep the current change in view: its block keeps its number in both modes.
-    const anchor = this.anchors(mode)[this.current];
-    if (anchor !== undefined) this.scroll.scroll_to_item(anchor, "center");
+    this.recentre();
   }
 
   /** @param {import("gpui-kit").KeyEvent} e @param {import("gpui-kit").Context} cx */
@@ -266,6 +340,7 @@ export class DiffView {
     if (NEXT_KEYS.has(k)) this.go(1);
     else if (PREV_KEYS.has(k)) this.go(-1);
     else if (k === "i") this.setMode(diffMode() === "inline" ? "split" : "inline");
+    else if (k === "e") this.setFolds(!foldsCollapsed());
     else if (k === "left" || k === "right") this.setPan(this.pan + (k === "right" ? PAN_STEP : -PAN_STEP), diffMode());
     else if (k === "home") this.setPan(0, diffMode());
     else if (k === "r") this.reload();
@@ -326,7 +401,7 @@ export class DiffView {
     }
     const controls = h_flex().flex_none().gap(8).items_center();
     if (this.doc) controls.child(this.navigator(t, mode));
-    controls.child(this.modeSwitch(t, mode)).child(this.reloadButton(t));
+    controls.child(this.foldSwitch(t)).child(this.modeSwitch(t, mode)).child(this.reloadButton(t));
     return h_flex().flex_none().h(34).px(12).gap(8).items_center().overflow_hidden()
       .border_b_1().border_color(t.border).bg(t.surface)
       .child(what)
@@ -375,15 +450,14 @@ export class DiffView {
 
   /** The "Side by side | Inline" segmented switch. @param {Record<string, string>} t @param {RowMode} mode */
   modeSwitch(t, mode) {
-    /** @param {RowMode} value @param {string} label */
-    const seg = (value, label) => div().id(`mode-${value}`).px(8).h(20).flex().items_center().rounded(4).text_size(11).cursor_pointer()
-      .when(mode === value, (e) => e.bg(t.background).text_color(t.foreground).font_semibold())
-      .when(mode !== value, (e) => e.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
-      .on_click((_e, cx) => { cx.stop_propagation(); this.setMode(value); cx.notify(); })
-      .child(label);
-    return h_flex().flex_none().p(2).gap(2).rounded(6).bg(t.raised)
-      .child(seg("split", "Side by side"))
-      .child(seg("inline", "Inline"));
+    return segmented(t, "mode", [["split", "Side by side"], ["inline", "Inline"]], mode,
+      (v) => this.setMode(/** @type {RowMode} */ (v)));
+  }
+
+  /** The "Collapse unchanged | Show all" segmented switch. @param {Record<string, string>} t */
+  foldSwitch(t) {
+    return segmented(t, "folds", [["collapsed", "Collapse unchanged"], ["open", "Show all"]],
+      foldsCollapsed() ? "collapsed" : "open", (v) => this.setFolds(v === "collapsed"));
   }
 
   /** @param {Record<string, string>} t @param {RowMode} mode */
@@ -391,7 +465,7 @@ export class DiffView {
     if (this.error && !this.doc) return div().p(16).text_color(t.ansi1).child(this.error);
     if (!this.doc) return div().p(16).text_color(t.dim).child("Loading diff…");
     if (this.doc.binary) return div().p(16).text_color(t.dim).child("Binary file changed");
-    const rows = this.doc.rows(mode);
+    const rows = this.shown(mode);
     if (!rows.length) return div().p(16).text_color(t.dim).child("No text changes");
     const h = rowH();
     const gutterW = this.gutterW();
@@ -399,6 +473,7 @@ export class DiffView {
     this.setPan(this.pan, mode);
     this.cols = this.textCols(mode);
     const render = (/** @type {any} */ r) => r.kind === "gap" ? this.gapRow(t, r, h)
+      : r.kind === "fold" ? this.foldRow(t, r, h)
       : mode === "inline" ? this.inlineRow(t, r, h, gutterW)
       : this.splitRow(t, r, h, gutterW);
     const list = v_virtual_list("diff-rows", rows.length, h, (i) => String(i),
@@ -445,12 +520,26 @@ export class DiffView {
     this.setPan(((x - track.x) / track.width) * (cols + this.maxPan(mode)) - cols / 2, mode);
   }
 
-  /** `⋯ N unchanged lines` and the next hunk's function title. @param {Record<string, string>} t @param {GapRow} row @param {number} h */
+  /**
+   * An Unloaded section: `⋯ N unchanged lines (not loaded)` and the next hunk's
+   * function title. It cannot be opened.
+   * @param {Record<string, string>} t @param {GapRow} row @param {number} h
+   */
   gapRow(t, row, h) {
     return h_flex().w_full().h(h).flex_none().items_center().gap(8).overflow_hidden().bg(t.raised).text_color(t.dim).text_size(11)
       .child(this.marker(t, undefined))
-      .child(div().flex_none().pl(8).child(`⋯ ${thousands(row.count)} unchanged line${row.count === 1 ? "" : "s"}`))
+      .child(div().flex_none().pl(8).child(`${unchanged(row.count)} (not loaded)`))
       .when(!!row.title, (e) => e.child(div().min_w(0).truncate().text_color(t.muted).child(row.title)));
+  }
+
+  /** A Fold: `⋯ N unchanged lines`; clicking opens it. @param {Record<string, string>} t @param {FoldRow} row @param {number} h */
+  foldRow(t, row, h) {
+    return h_flex().id(`fold-${row.id}`).w_full().h(h).flex_none().items_center().gap(8).overflow_hidden()
+      .bg(t.raised).text_color(t.muted).text_size(11).cursor_pointer()
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.openFold(row.id); cx.notify(); })
+      .child(this.marker(t, undefined))
+      .child(div().flex_none().pl(8).child(unchanged(row.count)));
   }
 
   /** @param {Record<string, string>} t @param {SplitRow} row @param {number} h @param {number} gutterW */
